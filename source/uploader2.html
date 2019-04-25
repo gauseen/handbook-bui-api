@@ -1,0 +1,3990 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <title>The source code</title>
+  <link href="../resources/prettify/prettify.css" type="text/css" rel="stylesheet" />
+  <script type="text/javascript" src="../resources/prettify/prettify.js"></script>
+  <style type="text/css">
+    .highlight { display: block; background-color: #ddd; }
+  </style>
+  <script type="text/javascript">
+    function highlight() {
+      document.getElementById(location.hash.replace(/#/, "")).className = "highlight";
+    }
+  </script>
+</head>
+<body onload="prettyPrint(); highlight();">
+  <pre class="prettyprint lang-js">define(&quot;bui/uploader&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;,&quot;bui/list&quot;,&quot;bui/data&quot;,&quot;bui/swf&quot;], function(require, exports, module){
+<span id='BUI'>/**
+</span> * @fileoverview 异步文件上传组件入口文件
+ * @author 索丘 yezengyue@gmail.com
+ * @ignore
+ **/
+var BUI = require(&quot;bui/common&quot;),
+  Uploader = BUI.namespace(&#39;Uploader&#39;);
+
+BUI.mix(Uploader, {
+  Uploader: require(&quot;bui/uploader/uploader&quot;),
+  Queue: require(&quot;bui/uploader/queue&quot;),
+  Theme: require(&quot;bui/uploader/theme&quot;),
+  Factory: require(&quot;bui/uploader/factory&quot;)
+});
+
+module.exports = Uploader;
+
+});
+define(&quot;bui/uploader/uploader&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;,&quot;bui/list&quot;,&quot;bui/data&quot;,&quot;bui/swf&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @ignore
+ * @fileoverview 异步文件上传组件
+ * @author 索丘 yezengyue@gmail.com
+ **/
+
+var $ = require(&quot;jquery&quot;),
+  BUI = require(&quot;bui/common&quot;),
+  Component = BUI.Component,
+  File = require(&quot;bui/uploader/file&quot;),
+  Theme = require(&quot;bui/uploader/theme&quot;),
+  Factory = require(&quot;bui/uploader/factory&quot;),
+  Validator = require(&quot;bui/uploader/validator&quot;);
+
+//上传类型的检测函数定义
+var supportMap = {
+  ajax: function(){
+    return !!window.FormData;
+  },
+  //flash上传类型默认所有浏览器都支持
+  flash: function(){
+    return true;
+  },
+  iframe: function(){
+    return true;
+  }
+}
+
+//是否支持该上传类型
+function isSupport(type){
+  return supportMap[type] &amp;&amp; supportMap[type]();
+}
+
+//设置Controller的属性
+function setControllerAttr(control, key, value) {
+  if (BUI.isFunction(control.set)) {
+    control.set(key, value);
+  }
+  else {
+    control[key] = value;
+  }
+}
+
+<span id='BUI-Uploader-Uploader'>/**
+</span> * 文件上传组组件
+ * @class BUI.Uploader.Uploader
+ * @extends BUI.Component.Controller
+ * 
+ * &lt;pre&gt;&lt;code&gt;
+ *
+ * BUI.use(&#39;bui/uploader&#39;, function(Uploader){
+ *   var uploader = new Uploader.Uploader({
+ *     url: &#39;../upload.php&#39;
+ *   }).render();
+ *
+ *  uploader.on(&#39;success&#39;, function(ev){
+ *    //获取上传返回的结果
+ *    var result = ev.result;
+ *  })
+ * });
+ * 
+ * &lt;/code&gt;&lt;/pre&gt;
+ */
+var Uploader = Component.Controller.extend({
+  initializer: function(){
+    var _self = this;
+    _self._initTheme();
+    _self._initType();
+  },
+  renderUI: function(){
+    var _self = this;
+    _self._renderButton();
+    _self._renderUploaderType();
+    _self._renderQueue();
+    _self._initValidator();
+  },
+  bindUI: function () {
+    var _self = this;
+    _self._bindButton();
+    _self._bindUploaderCore();
+    _self._bindQueue();
+  },
+<span id='BUI-Uploader-Uploader-method-_initTheme'>  /**
+</span>   * @private
+   * 初始化使用的主题
+   */
+  _initTheme: function(){
+    var _self = this,
+      theme = Theme.getTheme(_self.get(&#39;theme&#39;)),
+      attrVals = _self.getAttrVals();
+    BUI.each(theme, function(value, name){
+      //uploader里面没有定义该配置，但是主题里面有定义
+      if(attrVals[name] === undefined){
+        _self.set(name, value);
+      }
+      else if($.isPlainObject(value)){
+        BUI.mix(value, attrVals[name]);
+        _self.set(name, value);
+      }
+    });
+  },
+<span id='BUI-Uploader-Uploader-method-_initType'>  /**
+</span>   * 初始化上传类型
+   * @private
+   * @description 默认按最优处理
+   */
+  _initType: function(){
+    var _self = this,
+      types = _self.get(&#39;types&#39;),
+      type = _self.get(&#39;type&#39;);
+    //没有设置时按最优处理，有则按设定的处理
+    if(!type){
+      BUI.each(types, function(item){
+        if(isSupport(item)){
+          type = item;
+          return false;
+        }
+      })
+    }
+    _self.set(&#39;type&#39;, type);
+  },
+<span id='BUI-Uploader-Uploader-method-_initValidator'>  /**
+</span>   * 初始化验证器
+   * @private
+   */
+  _initValidator: function(){
+    var _self = this,
+      validator = _self.get(&#39;validator&#39;);
+    if(!validator){
+      validator = new Validator({
+        queue: _self.get(&#39;queue&#39;),
+        rules: _self.get(&#39;rules&#39;)
+      });
+      _self.set(&#39;validator&#39;, validator);
+    }
+  },
+<span id='BUI-Uploader-Uploader-method-_renderUploaderType'>  /**
+</span>   * 初始线上传类型的实例
+   * @private
+   */
+  _renderUploaderType: function(){
+    var _self = this,
+      type = _self.get(&#39;type&#39;),
+      config = _self.get(&#39;uploaderType&#39;);
+
+    var uploaderType = Factory.createUploadType(type, config);
+    uploaderType.set(&#39;uploader&#39;, _self);
+    _self.set(&#39;uploaderType&#39;, uploaderType);
+  },
+<span id='BUI-Uploader-Uploader-method-_renderButton'>  /**
+</span>   * 初始化Button
+   * @private
+   */
+  _renderButton: function(){
+    var _self = this,
+      type = _self.get(&#39;type&#39;),
+      el = _self.get(&#39;el&#39;),
+      button = _self.get(&#39;button&#39;);
+    if(!button.isController){
+      button.render = el;
+      button.autoRender = true;
+      button = Factory.createButton(type, button);
+      _self.set(&#39;button&#39;, button);
+    }
+    button.set(&#39;uploader&#39;, _self);
+  },
+<span id='BUI-Uploader-Uploader-method-_renderQueue'>  /**
+</span>   * 初始化上传的对列
+   * @private
+   */
+  _renderQueue: function(){
+    var _self = this,
+      el = _self.get(&#39;el&#39;),
+      queue = _self.get(&#39;queue&#39;);
+    if (!queue.isController) {
+      queue.render = el;
+      queue.autoRender = true;
+      //queue.uploader = _self;
+      queue = Factory.createQueue(queue);
+      _self.set(&#39;queue&#39;, queue);
+    }
+    queue.set(&#39;uploader&#39;, _self);
+  },
+<span id='BUI-Uploader-Uploader-method-_bindButton'>  /**
+</span>   * 绑定button的事件
+   * @private
+   */
+  _bindButton: function () {
+    var _self = this,
+      button = _self.get(&#39;button&#39;),
+      queue = _self.get(&#39;queue&#39;);
+
+    button.on(&#39;change&#39;, function(ev) {
+      var files = ev.files;
+      _self.fire(&#39;beforechange&#39;, {items: files});
+      //对添加的文件添加状态
+      queue.addItems(files);
+      _self.fire(&#39;change&#39;, {items: files});
+    });
+  },
+<span id='BUI-Uploader-Uploader-method-_bindQueue'>  /**
+</span>   * 绑定上传的对列
+   * @private
+   */
+  _bindQueue: function () {
+    var _self = this,
+      queue = _self.get(&#39;queue&#39;),
+      button = _self.get(&#39;button&#39;),
+      validator = _self.get(&#39;validator&#39;);
+
+    //渲染完了之后去设置文件状态，这个是会在添加完后触发的
+    queue.on(&#39;itemrendered&#39;, function(ev){
+      var item = ev.item,
+        //如果文件已经存在某一状态，则不再去设置add状态
+        status = queue.status(item) || &#39;add&#39;;
+
+      // 说明是通过addItem直接添加进来的
+      if(!item.isUploaderFile){
+        item.result = BUI.cloneObject(item);
+        item = File.create(item);
+      }
+
+      if(!validator.valid(item)){
+        status = &#39;error&#39;;
+      }
+
+      queue.updateFileStatus(item, status);
+
+      if(_self.get(&#39;autoUpload&#39;)){
+        _self.upload();
+      }
+    });
+
+    queue.on(&#39;itemupdated&#39;, function(ev) {
+      _self.uploadFiles();
+    });
+  },
+<span id='BUI-Uploader-Uploader-method-_bindUploaderCore'>  /**
+</span>   * 文件上传的处理函数
+   * @private
+   */
+  _bindUploaderCore: function () {
+    var _self = this,
+      queue = _self.get(&#39;queue&#39;),
+      uploaderType = _self.get(&#39;uploaderType&#39;);
+
+    //start事件
+    uploaderType.on(&#39;start&#39;, function(ev){
+      var item = ev.file;
+      delete item.result;
+      _self.fire(&#39;start&#39;, {item: item});
+    });
+    //上传的progress事件
+    uploaderType.on(&#39;progress&#39;, function(ev){
+
+      var curUploadItem = _self.get(&#39;curUploadItem&#39;),
+        loaded = ev.loaded,
+        total = ev.total;
+      BUI.mix(curUploadItem, {
+        //文件总大小, 这里的单位是byte
+        total: total,
+        //已经上传的大小
+        loaded: loaded,
+        //已经上传的百分比
+        loadedPercent: loaded * 100 / total
+      });
+
+      //设置当前正处于的状态
+      queue.updateFileStatus(curUploadItem, &#39;progress&#39;);
+
+      _self.fire(&#39;progress&#39;, {item: curUploadItem, total: total, loaded: loaded});
+    });
+    //上传过程中的error事件
+    //一般是当校验出错时和上传接口异常时触发的
+    uploaderType.on(&#39;error&#39;, function(ev){
+      var curUploadItem = _self.get(&#39;curUploadItem&#39;),
+        errorFn = _self.get(&#39;error&#39;),
+        completeFn = _self.get(&#39;complete&#39;);
+      //设置对列中完成的文件
+      queue.updateFileStatus(curUploadItem, &#39;error&#39;);
+
+      errorFn &amp;&amp; BUI.isFunction(errorFn) &amp;&amp; errorFn.call(_self);
+      _self.fire(&#39;error&#39;, {item: curUploadItem});
+
+      completeFn &amp;&amp; BUI.isFunction(completeFn) &amp;&amp; completeFn.call(_self);
+      _self.fire(&#39;complete&#39;, {item: curUploadItem});
+
+      _self.set(&#39;curUploadItem&#39;, null);
+    });
+
+    //上传完成的事件
+    uploaderType.on(&#39;complete&#39;, function(ev){
+      var curUploadItem = _self.get(&#39;curUploadItem&#39;),
+        result = ev.result,
+        isSuccess= _self.get(&#39;isSuccess&#39;),
+        successFn = _self.get(&#39;success&#39;),
+        errorFn = _self.get(&#39;error&#39;),
+        completeFn = _self.get(&#39;complete&#39;);
+
+      _self.set(&#39;curUploadItem&#39;, null);
+
+      // BUI.mix(curUploadItem.result, result);
+      curUploadItem.result = result;
+
+      if(isSuccess.call(_self, result)){
+        //为了兼容原来只设置了itemTpl的情况
+        BUI.mix(curUploadItem, result);
+        queue.updateFileStatus(curUploadItem, &#39;success&#39;);
+        successFn &amp;&amp; BUI.isFunction(successFn) &amp;&amp; successFn.call(_self, result);
+        _self.fire(&#39;success&#39;, {item: curUploadItem, result: result});
+      }
+      else{
+        queue.updateFileStatus(curUploadItem, &#39;error&#39;);
+        errorFn &amp;&amp; BUI.isFunction(errorFn) &amp;&amp; errorFn.call(_self, result);
+        _self.fire(&#39;error&#39;, {item: curUploadItem, result: result});
+      }
+
+      completeFn &amp;&amp; BUI.isFunction(completeFn) &amp;&amp; completeFn.call(_self, result);
+      _self.fire(&#39;complete&#39;, {item: curUploadItem, result: result});
+      
+
+      //重新上传其他等待的文件
+      //_self.uploadFiles();
+    });
+  },
+<span id='BUI-Uploader-Uploader-method-uploadFile'>  /**
+</span>   * 开始进行上传
+   * @param  {Object} item
+   */
+  uploadFile: function (item) {
+    var _self = this,
+      queue = _self.get(&#39;queue&#39;),
+      uploaderType = _self.get(&#39;uploaderType&#39;),
+      curUploadItem = _self.get(&#39;curUploadItem&#39;);
+
+    //如果有文件正等侍上传，而且上传组件当前处理空闲状态，才进行上传
+    if (item &amp;&amp; !curUploadItem) {
+      //设置正在上传的状态
+      _self.set(&#39;curUploadItem&#39;, item);
+      //更新文件的状态
+      queue.updateFileStatus(item, &#39;start&#39;);
+      uploaderType.upload(item);
+    }
+  },
+<span id='BUI-Uploader-Uploader-method-uploadFiles'>  /**
+</span>   * 上传文件，只对对列中所有wait状态的文件
+   */
+  uploadFiles: function () {
+    var _self = this,
+      queue = _self.get(&#39;queue&#39;),
+      //所有文件只有在wait状态才可以上传
+      items = queue.getItemsByStatus(&#39;wait&#39;);
+
+    if (items &amp;&amp; items.length) {
+      //开始进行对列中的上传
+      _self.uploadFile(items[0]);
+    }
+  },
+<span id='BUI-Uploader-Uploader-method-upload'>  /**
+</span>   * 上传所有新添加的文件
+   */
+  upload: function(){
+    var _self = this,
+      queue = _self.get(&#39;queue&#39;),
+      //所有文件只有在wait状态才可以上传
+      items = queue.getItemsByStatus(&#39;add&#39;);
+    BUI.each(items, function(item){
+      queue.updateFileStatus(item, &#39;wait&#39;);
+    });
+  },
+<span id='BUI-Uploader-Uploader-method-cancel'>  /**
+</span>   * 取消正在上传的文件 
+   */
+  cancel: function(item){
+    var _self = this;
+    if(item){
+      _self._cancel(item);
+      return
+    }
+    //只对将要进行上传的文件进行取消
+    BUI.each(_self.get(&#39;queue&#39;).getItemsByStatus(&#39;wait&#39;), function(item){
+      _self._cancel(item);
+    });
+  },
+<span id='BUI-Uploader-Uploader-method-_cancel'>  /**
+</span>   * 取消
+   * @param  {[type]} item [description]
+   * @return {[type]}      [description]
+   */
+  _cancel: function(item){
+    var _self = this,
+      queue = _self.get(&#39;queue&#39;),
+      uploaderType = _self.get(&#39;uploaderType&#39;),
+      curUploadItem = _self.get(&#39;curUploadItem&#39;);
+
+    //说明要取消项正在进行上传
+    if (curUploadItem === item) {
+      uploaderType.cancel();
+      _self.set(&#39;curUploadItem&#39;, null);
+    }
+
+    queue.updateFileStatus(item, &#39;cancel&#39;);
+
+    _self.fire(&#39;cancel&#39;, {item: item});
+  },
+<span id='BUI-Uploader-Uploader-method-isValid'>  /**
+</span>   * 校验是否通过
+   * @description 判断成功的数量和列表中的数量是否一致
+   */
+  isValid: function(){
+    var _self = this,
+      queue = _self.get(&#39;queue&#39;);
+    return queue.getItemsByStatus(&#39;success&#39;).length === queue.getItems().length;
+  }
+}, {
+  ATTRS: {
+<span id='BUI-Uploader-Uploader-property-types'>    /**
+</span>     * 上传的类型，会依次按这个顺序来检测，并选择第一个可用的
+     * @type {Array} 上传类型
+     * @default [&#39;ajax&#39;, &#39;flash&#39;, &#39;iframe&#39;]
+     */
+    types: {
+      value: [&#39;ajax&#39;, &#39;flash&#39;, &#39;iframe&#39;]
+    },
+<span id='BUI-Uploader-Uploader-property-type'>    /**
+</span>     * 上传的类型，有ajax,flash,iframe四种
+     * @type {String}
+     */
+    type: {
+    },
+<span id='BUI-Uploader-Uploader-property-theme'>    /**
+</span>     * 主题
+     * @type {BUI.Uploader.Theme}
+     */
+    theme: {
+      value: &#39;default&#39;
+    },
+<span id='BUI-Uploader-Uploader-property-button'>    /**
+</span>     * 上传组件的button对像
+     * @type {BUI.Uploader.Button}
+     */
+    button: {
+      value: {},
+      shared: false
+    },
+<span id='BUI-Uploader-Uploader-property-text'>    /**
+</span>     * 按钮的文本
+     * @type {String} text
+     * @default 上传文件
+     */
+    text: {
+      setter: function(v) {
+        setControllerAttr(this.get(&#39;button&#39;), &#39;text&#39;, v);
+        return v;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-name'>    /**
+</span>     * 提交文件时的name值
+     * @type {String} name
+     * @default fileData
+     */
+    name: {
+      setter: function(v) {
+        setControllerAttr(this.get(&#39;button&#39;), &#39;name&#39;, v);
+        setControllerAttr(this.get(&#39;uploaderType&#39;), &#39;fileDataName&#39;, v);
+        return v;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-disabled'>    /**
+</span>     * 上传组件是否可用
+     * @type {Boolean} disabled
+     */
+    disabled: {
+      value: false,
+      setter: function(v) {
+        setControllerAttr(this.get(&#39;button&#39;), &#39;disabled&#39;, v);
+        return v;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-multiple'>    /**
+</span>     * 是否支持多选
+     * @type {Boolean} multiple
+     */
+    multiple: {
+      value: true,
+      setter: function(v) {
+        setControllerAttr(this.get(&#39;button&#39;), &#39;multiple&#39;, v);
+        return v;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-filter'>    /**
+</span>     * 文件过滤
+     * @type Array
+     * @default []
+     * @description
+     * 在使用ajax方式上传时，不同浏览器、不同操作系统这个filter表现得都不太一致
+     * 所以在使用ajax方式上传不建议使用
+     * 如果已经声明使用flash方式上传，则可以使用这个
+     *
+     * &lt;pre&gt;&lt;code&gt;
+     * filter: {ext:&quot;.jpg,.jpeg,.png,.gif,.bmp&quot;}
+     * &lt;/code&gt;&lt;/pre&gt;
+     *
+     */
+    filter: {
+      setter: function(v) {
+        setControllerAttr(this.get(&#39;button&#39;), &#39;filter&#39;, v);
+        return v;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-uploaderType'>    /**
+</span>     * 用来处理上传的类
+     * @type {Object}
+     * @readOnly
+     */
+    uploaderType: {
+      value: {},
+      shared: false
+    },
+<span id='BUI-Uploader-Uploader-property-url'>    /**
+</span>     * 文件上传的url
+     * @type {String} url
+     */
+    url: {
+      setter: function(v) {
+        setControllerAttr(this.get(&#39;uploaderType&#39;), &#39;url&#39;, v);
+        return v;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-data'>    /**
+</span>     * 文件上传时，附加的数据
+     * @type {Object} data
+     */
+    data: {
+      setter: function(v) {
+        setControllerAttr(this.get(&#39;uploaderType&#39;), &#39;data&#39;, v);
+        return v;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-queue'>    /**
+</span>     * 上传组件的上传对列
+     * @type {BUI.Uploader.Queue}
+     */
+    queue: {
+      value: {},
+      shared: false
+    },
+<span id='BUI-Uploader-Uploader-property-resultTpl'>    /**
+</span>     * 上传结果的模板，可根据上传状态的不同进行设置，没有时取默认的
+     * @type {Object}
+     * 
+     * ** 默认定义的模板结构 **
+     * &lt;pre&gt;&lt;code&gt;
+     * 
+     * &#39;default&#39;: &#39;&lt;div class=&quot;default&quot;&gt;{name}&lt;/div&gt;&#39;,
+     * &#39;success&#39;: &#39;&lt;div data-url=&quot;{url}&quot; class=&quot;success&quot;&gt;{name}&lt;/div&gt;&#39;,
+     * &#39;error&#39;: &#39;&lt;div class=&quot;error&quot;&gt;&lt;span title=&quot;{name}&quot;&gt;{name}&lt;/span&gt;&lt;span class=&quot;uploader-error&quot;&gt;{msg}&lt;/span&gt;&lt;/div&gt;&#39;,
+     * &#39;progress&#39;: &#39;&lt;div class=&quot;progress&quot;&gt;&lt;div class=&quot;bar&quot; style=&quot;width:{loadedPercent}%&quot;&gt;&lt;/div&gt;&lt;/div&gt;&#39;
+     * 
+     * &lt;/code&gt;&lt;/pre&gt;
+     */
+    resultTpl: {
+      setter: function(v) {
+        setControllerAttr(this.get(&#39;queue&#39;), &#39;resultTpl&#39;, v);
+        return v;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-autoUpload'>    /**
+</span>     * 选中文件后是否自动上传
+     * @type {Boolean}
+     * @default true
+     */
+    autoUpload: {
+      value: true
+    },
+<span id='BUI-Uploader-Uploader-property-uploadStatus'>    /**
+</span>     * 当前上传的状态
+     * @type {String}
+     */
+    uploadStatus: {
+    },
+<span id='BUI-Uploader-Uploader-property-isSuccess'>    /**
+</span>     * 判断上传是否已经成功，默认判断有返回，且返回的json中存在url这个字段
+     * @type {Function}
+     */
+    isSuccess: {
+      value: function(result){
+        if(result &amp;&amp; result.url){
+          return true;
+        }
+        return false;
+      }
+    },
+<span id='BUI-Uploader-Uploader-property-validator'>    /**
+</span>     * uploader的验证器
+     * @type {BUI.Uploader.Validator}
+     */
+    validator: {
+    },
+    events : {
+      value : {
+<span id='BUI-Uploader-Uploader-event-change'>        /**
+</span>         * 选中文件时
+         * @event
+         * @param {Object} e 事件对象
+         * @param {Array} e.items 选中的文件项
+         */
+        &#39;change&#39;: false,
+<span id='BUI-Uploader-Uploader-event-start'>        /**
+</span>         * 文件开始上传时
+         * @event
+         * @param {Object} e 事件对象
+         * @param {Object} e.item 当前上传的项
+         */
+        &#39;start&#39;: false,
+<span id='BUI-Uploader-Uploader-event-progress'>        /**
+</span>         * 文件正在上传时
+         * @event
+         * @param {Object} e 事件对象
+         * @param {Object} e.item 当前上传的项
+         * @param {Number} e.total 文件的总大小
+         * @param {Object} e.loaded 已经上传的大小
+         */
+        &#39;progress&#39;: false,
+<span id='BUI-Uploader-Uploader-event-success'>        /**
+</span>         * 文件上传成功时
+         * @event
+         * @param {Object} e 事件对象
+         * @param {Object} e.item 当前上传的项
+         * @param {Object} e.result 服务端返回的结果
+         */
+        &#39;success&#39;: false,
+<span id='BUI-Uploader-Uploader-event-error'>        /**
+</span>         * 文件上传失败时
+         * @event
+         * @param {Object} e 事件对象
+         * @param {Object} e.item 当前上传的项
+         * @param {Object} e.result 服务端返回的结果
+         */
+        &#39;error&#39;: false,
+<span id='BUI-Uploader-Uploader-event-complete'>        /**
+</span>         * 文件完成时，不管成功失败都会触发
+         * @event
+         * @param {Object} e 事件对象
+         * @param {Object} e.item 当前上传的项
+         * @param {Object} e.result 服务端返回的结果
+         */
+        &#39;complete&#39;: false,
+<span id='BUI-Uploader-Uploader-event-cancel'>        /**
+</span>         * 取消上传时
+         * @event
+         * @param {Object} e 事件对象
+         * @param {Object} e.item 当前取消的项
+         */
+        &#39;cancel&#39;: false
+      }
+    }
+  }
+}, {
+  xclass: &#39;uploader&#39;
+});
+
+module.exports = Uploader;
+
+});
+define(&quot;bui/uploader/file&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;], function(require, exports, module){
+<span id='BUI'>/**
+</span> * @fileoverview 异步文件上传组件的文件对像
+ * @author 索丘 yezengyue@gmail.com
+ * @ignore
+ **/
+
+var BUI = require(&quot;bui/common&quot;);
+
+<span id='BUI-method-getFileId'>/**
+</span> * 获取文件的id
+ */
+function getFileId (file) {
+  return file.id || BUI.guid(&#39;bui-uploader-file&#39;);
+}
+
+<span id='global-method-getFileName'>/**
+</span> * 获取文件名称
+ * @param {String} path 文件路径
+ * @return {String}
+ * @ignore
+ */
+function getFileName (path) {
+  return path.replace(/.*(\/|\\)/, &quot;&quot;);
+}
+
+<span id='global-method-getFileExtName'>/**
+</span> * 获取文件扩展名
+ * @param {String} filename 文件名
+ * @return {String}
+ * @private
+ * @ignore
+ */
+function getFileExtName(filename){
+  var result = /\.[^\.]+$/.exec(filename) || [];
+  return result.join(&#39;&#39;).toLowerCase();
+}
+
+<span id='global-method-convertByteSize'>/**
+</span> * 转换文件大小字节数
+ * @param {Number} bytes 文件大小字节数
+ * @return {String} 文件大小
+ * @private
+ * @ignore
+ */
+function convertByteSize(bytes) {
+  var i = -1;
+  do {
+    bytes = bytes / 1024;
+    i++;
+  } while (bytes &gt; 99);
+  return Math.max(bytes, 0.1).toFixed(1) + [&#39;KB&#39;, &#39;MB&#39;, &#39;GB&#39;, &#39;TB&#39;, &#39;PB&#39;, &#39;EB&#39;][i];
+}
+
+module.exports = {
+  // /**
+  //  * 创建一个上传对列里面的内容对象
+  //  */
+  // getFileAttr: function(file){
+  //   return {
+  //     name: file.name,
+  //     size: file.size,
+  //     type: file.type,
+  //     textSize: file.textSize,
+  //     ext: file.extName,
+  //     id: file.id
+  //   }
+  // },
+  create: function(file){
+    file.id = file.id || BUI.guid(&#39;bui-uploader-file&#39;);
+    // 去掉文件的前面的路径，获取一个纯粹的文件名
+    file.name = getFileName(file.name);
+    file.ext = getFileExtName(file.name);
+    file.textSize = convertByteSize(file.size);
+    
+    file.isUploaderFile = true;
+
+    //file.attr = this.getFileAttr(file);
+
+    return file;
+  }
+};
+
+});
+define(&quot;bui/uploader/theme&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;], function(require, exports, module){
+<span id='BUI'>/**
+</span> * @ignore
+ * @fileoverview 文件上传主题的处理
+ * @author 索丘 yezengyue@gmail.com
+ **/
+
+var BUI = require(&quot;bui/common&quot;);
+
+var themes = {};
+
+<span id='BUI-Uploader-Theme'>/**
+</span> * 文件上传的主题设置
+ * @class BUI.Uploader.Theme
+ * @static
+ *
+ * &lt;pre&gt;&lt;code&gt;
+ * 默认自带的题有
+ * 
+ * //这个是默认的
+ * theme: &#39;defaultTheme&#39;
+ *
+ * //这个带图片预览的
+ * theme: &#39;imageView&#39;
+ * &lt;/code&gt;&lt;/pre&gt;
+ */
+var Theme = {
+<span id='BUI-Uploader-Theme-method-addTheme'>  /**
+</span>   * 添加一个主题
+   * @param {String} name   主题名称
+   * @param {Object} config 主题的配置
+   * 
+   * &lt;pre&gt;&lt;code&gt;
+   * @example
+   * // 添加一个主题模板
+   * Theme.addTheme(&#39;imageView&#39;, {
+   *  elCls: &#39;imageViewTheme&#39;,
+   *  queue:{
+   *    resultTpl: {
+   *      &#39;default&#39;: &#39;&amp;lt;div class=&quot;default&quot;&amp;gt;{name}&amp;lt;/div&amp;gt;&#39;,
+   *      &#39;success&#39;: &#39;&amp;lt;div class=&quot;success&quot;&amp;gt;&amp;lt;img src=&quot;{url}&quot; /&amp;gt;&amp;lt;/div&amp;gt;&#39;
+   *      &#39;error&#39;: &#39;&amp;lt;div class=&quot;error&quot;&amp;gt;&amp;lt;span title=&quot;{name}&quot;&amp;gt;{name}&amp;lt;/span&amp;gt;&amp;lt;span class=&quot;uploader-error&quot;&amp;gt;{msg}&amp;lt;/span&amp;gt;&amp;lt;/div&amp;gt;&#39;,
+   *      &#39;progress&#39;: &#39;&amp;lt;div class=&quot;progress&quot;&amp;gt;&amp;lt;div class=&quot;bar&quot; style=&quot;width:{loadedPercent}%&quot;&amp;gt;&amp;lt;/div&amp;gt;&amp;lt;/div&amp;gt;&#39;
+   *    }
+   *  }
+   *});
+   * &lt;/code&gt;&lt;/pre&gt;
+   */
+  addTheme: function(name, config){
+    themes[name] = config;
+  },
+<span id='BUI-Uploader-Theme-method-getTheme'>  /**
+</span>   * 获取一个主题
+   * @param  {String} name [description]
+   * @return {BUI.Uploader.Theme} 主题的配置
+   */
+  getTheme: function(name){
+    //不能覆盖主题设置的
+    return BUI.cloneObject(themes[name]);
+  }
+};
+
+//这个默认的主题
+Theme.addTheme(&#39;default&#39;, {
+  elCls: &#39;defaultTheme&#39;
+});
+
+
+//带图片预览的主题
+Theme.addTheme(&#39;imageView&#39;, {
+  elCls: &#39;imageViewTheme&#39;,
+  queue:{
+    resultTpl: {
+      &#39;success&#39;: &#39;&lt;div class=&quot;success&quot;&gt;&lt;img src=&quot;{url}&quot; /&gt;&lt;/div&gt;&#39;
+    }
+  }
+});
+
+module.exports = Theme;
+
+});
+define(&quot;bui/uploader/factory&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;,&quot;bui/list&quot;,&quot;bui/data&quot;,&quot;bui/swf&quot;], function(require, exports, module){
+<span id='BUI'>/**
+</span> * @fileoverview 文件上传的工厂类
+ * @author 索丘 yezengyue@gmail.com
+ * @ignore
+ **/
+
+var BUI = require(&quot;bui/common&quot;),
+  Queue = require(&quot;bui/uploader/queue&quot;),
+  HtmlButton = require(&quot;bui/uploader/button/htmlButton&quot;),
+  SwfButton = require(&quot;bui/uploader/button/swfButton&quot;),
+  Ajax = require(&quot;bui/uploader/type/ajax&quot;),
+  Flash = require(&quot;bui/uploader/type/flash&quot;),
+  Iframe = require(&quot;bui/uploader/type/iframe&quot;),
+  UploadifyButton = require(&quot;bui/uploader/button/uploadify&quot;),
+  Uploadify = require(&quot;bui/uploader/type/uploadify&quot;);
+
+<span id='Factory'>/**
+</span> * @BUI.Uploader.Factory
+ * 创建上传控件的工厂类
+ */
+function Factory(){
+
+}
+Factory.prototype = {
+<span id='Factory-method-createUploadType'>  /**
+</span>   * 创建上传的类型
+   * @param  {String} type   上传类型
+   * @param  {Object} config 配置项
+   * @return {BUI.Uploader.UploadType} 类型的实例
+   */
+  createUploadType: function(type, config){
+    if (type === &#39;ajax&#39;) {
+      return new Ajax(config);
+    }
+    else if(type === &#39;flash&#39;){
+      return new Flash(config);
+    }
+    else if (type === &#39;uploadify&#39;) {
+      return new Uploadify(config);
+    }
+    else{
+      return new Iframe(config);
+    }
+  },
+<span id='Factory-method-createButton'>  /**
+</span>   * 创建button
+   * @param  {String} type   上传类型
+   * @param  {Object} config button的配置项
+   * @return {BUI.Uploader.Button} button的实例
+   */
+  createButton: function(type, config){
+    if(type === &#39;ajax&#39; || type === &#39;iframe&#39;){
+      return new HtmlButton(config);
+    }
+    else if (type === &#39;uploadify&#39;) {
+      return new UploadifyButton(config);
+    }
+    else{
+      return new SwfButton(config);
+    }
+  },
+<span id='Factory-method-createQueue'>  /**
+</span>   * 创建上传的对队
+   * @param  {Object} config 配置项
+   * @return {BUI.Uploader.Queue} 队列的实例
+   */
+  createQueue: function(config){
+    return new Queue(config);
+  }
+}
+
+module.exports = new Factory();
+
+});
+define(&quot;bui/uploader/queue&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;,&quot;bui/list&quot;,&quot;bui/data&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @ignore
+ * @fileoverview 文件上传队列列表显示和处理
+ * @author 索丘 yezengyue@gmail.com
+ **/
+
+var $ = require(&quot;jquery&quot;),
+  BUI = require(&quot;bui/common&quot;),
+  SimpleList = require(&quot;bui/list&quot;).SimpleList;
+
+var CLS_QUEUE = BUI.prefix + &#39;queue&#39;,
+  CLS_QUEUE_ITEM = CLS_QUEUE + &#39;-item&#39;;
+
+<span id='BUI-Uploader-Queue'>/**
+</span> * 上传文件的显示队列
+ * @class BUI.Uploader.Queue
+ * @extends BUI.List.SimpleList
+ * &lt;pre&gt;&lt;code&gt;
+ *
+ * BUI.use(&#39;bui/uploader&#39;, function(Uploader){
+ * });
+ * 
+ * &lt;/code&gt;&lt;/pre&gt;
+ */
+var Queue = SimpleList.extend({
+  bindUI: function () {
+    var _self = this,
+      el = _self.get(&#39;el&#39;),
+      delCls = _self.get(&#39;delCls&#39;);
+
+    el.delegate(&#39;.&#39; + delCls, &#39;click&#39;, function (ev) {
+        var itemContainer = $(ev.target).parents(&#39;.bui-queue-item&#39;),
+          item = _self.getItemByElement(itemContainer);
+
+      if(_self.fire(&#39;beforeremove&#39;, {item: item, target: ev.target}) !== false) {
+        _self.removeItem(item);
+      }
+    });
+  },
+<span id='BUI-Uploader-Queue-method-removeItem'>  /**
+</span>   * 从队列中删除一项
+   * @param  {Object} item
+   */
+  removeItem: function(item){
+    var _self = this,
+      uploader = _self.get(&#39;uploader&#39;);
+
+    uploader &amp;&amp; uploader.cancel &amp;&amp; uploader.cancel(item);
+    Queue.superclass.removeItem.call(_self, item);
+  },
+<span id='BUI-Uploader-Queue-method-updateFileStatus'>  /**
+</span>   * 更新文件上传的状态
+   * @param  {Object} item
+   * @param  {String} status  上传的状态
+   * @param  {HTMLElement} element 这一项对应的dom元素
+   */
+  updateFileStatus: function(item, status, element){
+    var _self = this,
+      itemStatusFields = _self.get(&#39;itemStatusFields&#39;);
+    element = element || _self.findElement(item);
+      
+    BUI.each(itemStatusFields, function(v,k){
+      _self.setItemStatus(item,k,false,element);
+    });
+
+    _self.setItemStatus(item,status,true,element);
+    _self._setResultTpl(item, status);
+    _self.updateItem(item);
+  },
+<span id='BUI-Uploader-Queue-method-_setResultTpl'>  /**
+</span>   * 根据上传的状态设置上传列表的模板
+   * @private
+   * @param {Object} item
+   * @param {String} status 状态名称
+   */
+  _setResultTpl: function(item, status){
+    var _self = this,
+      resultTpl = _self.get(&#39;resultTpl&#39;),
+      itemTpl = resultTpl[status] || resultTpl[&#39;default&#39;],
+      tplData = BUI.mix(item, item.result);
+    item.resultTpl = BUI.substitute(itemTpl, tplData);
+  },
+<span id='BUI-Uploader-Queue-method-status'>  /**
+</span>   * 获取文件的当前状态
+   * @param {Object} item
+   * @return {String} status 状态名称
+   */
+  status: function(item){
+    var _self = this,
+      itemStatusFields = _self.get(&#39;itemStatusFields&#39;),
+      status;
+
+    BUI.each(itemStatusFields, function(v, k){
+      if (item[v]) {
+        status = v;
+        return false;
+      }
+    });
+    return status;
+  }
+}, {
+  ATTRS: {
+    itemTpl: {
+      value: &#39;&lt;li&gt;{resultTpl} &lt;span class=&quot;action&quot;&gt;&lt;span class=&quot;&#39; + CLS_QUEUE_ITEM + &#39;-del&quot;&gt;删除&lt;/span&gt;&lt;/span&gt;&lt;/li&gt;&#39;
+    },
+<span id='BUI-Uploader-Queue-property-resultTpl'>    /**
+</span>     * 上传结果的模板，可根据上传状态的不同进行设置，没有时取默认的
+     * @type {Object}
+     * 
+     * ** 默认定义的模板结构 **
+     * &lt;pre&gt;&lt;code&gt;
+     * 
+     * &#39;default&#39;: &#39;&lt;div class=&quot;default&quot;&gt;{name}&lt;/div&gt;&#39;,
+     * &#39;success&#39;: &#39;&lt;div data-url=&quot;{url}&quot; class=&quot;success&quot;&gt;{name}&lt;/div&gt;&#39;,
+     * &#39;error&#39;: &#39;&lt;div class=&quot;error&quot;&gt;&lt;span title=&quot;{name}&quot;&gt;{name}&lt;/span&gt;&lt;span class=&quot;uploader-error&quot;&gt;{msg}&lt;/span&gt;&lt;/div&gt;&#39;,
+     * &#39;progress&#39;: &#39;&lt;div class=&quot;progress&quot;&gt;&lt;div class=&quot;bar&quot; style=&quot;width:{loadedPercent}%&quot;&gt;&lt;/div&gt;&lt;/div&gt;&#39;
+     * 
+     * &lt;/code&gt;&lt;/pre&gt;
+     */
+    resultTpl:{
+      value: {
+        &#39;default&#39;: &#39;&lt;div class=&quot;default&quot;&gt;{name}&lt;/div&gt;&#39;,
+        &#39;success&#39;: &#39;&lt;div data-url=&quot;{url}&quot; class=&quot;success&quot;&gt;{name}&lt;/div&gt;&#39;,
+        &#39;error&#39;: &#39;&lt;div class=&quot;error&quot;&gt;&lt;span title=&quot;{name}&quot;&gt;{name}&lt;/span&gt;&lt;span class=&quot;uploader-error&quot;&gt;{msg}&lt;/span&gt;&lt;/div&gt;&#39;,
+        &#39;progress&#39;: &#39;&lt;div class=&quot;progress&quot;&gt;&lt;div class=&quot;bar&quot; style=&quot;width:{loadedPercent}%&quot;&gt;&lt;/div&gt;&lt;/div&gt;&#39;
+      },
+      setter: function(v){
+        return BUI.mix({}, this.get(&#39;resultTpl&#39;), v);
+      }
+    },
+<span id='BUI-Uploader-Queue-property-itemCls'>    /**
+</span>     * 列表项的cls
+     * @type {String}
+     */
+    itemCls: {
+      value: CLS_QUEUE_ITEM
+    },
+<span id='BUI-Uploader-Queue-property-delCls'>    /**
+</span>     * 删除的cls
+     * @protected
+     * @type {String}
+     */
+    delCls: {
+      value: CLS_QUEUE_ITEM + &#39;-del&#39;
+    },
+<span id='BUI-Uploader-Queue-property-itemStatusFields'>    /**
+</span>     * 列表项的状态
+     * @protected
+     * @type {Object}
+     */
+    itemStatusFields: {
+      value: {
+        add: &#39;add&#39;,
+        wait: &#39;wait&#39;,
+        start: &#39;start&#39;,
+        progress: &#39;progress&#39;,
+        success: &#39;success&#39;,
+        cancel: &#39;cancel&#39;,
+        error: &#39;error&#39;
+      }
+    }
+  }
+}, { 
+  xclass: &#39;queue&#39;
+});
+
+module.exports = Queue;
+
+});
+define(&quot;bui/uploader/button/htmlButton&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @ignore
+ * @fileoverview 文件上传按钮,使用input[type=file]
+ * @author: 索丘 yezengyue@gmail.com
+ **/
+
+var $ = require(&quot;jquery&quot;),
+  BUI = require(&quot;bui/common&quot;),
+  Component = BUI.Component,
+  File = require(&quot;bui/uploader/file&quot;),
+  ButtonBase = require(&quot;bui/uploader/button/base&quot;),
+  UA = BUI.UA;
+
+<span id='BUI-Uploader-Button-HtmlButton'>/**
+</span> * 文件上传按钮，ajax和iframe上传方式使用,使用的是input[type=file]
+ * @class BUI.Uploader.Button.HtmlButton
+ * @extends BUI.Uploader.Button
+ */
+var HtmlButton = ButtonBase.extend({
+  renderUI: function(){
+    var _self = this;
+    _self._createInput();
+  },
+<span id='BUI-Uploader-Button-HtmlButton-method-_createInput'>  /**
+</span>   * 创建隐藏的表单上传域
+   * @private
+   * @return {HTMLElement} 文件上传域容器
+   */
+  _createInput: function() {
+    var _self = this,
+      buttonCls = _self.get(&#39;buttonCls&#39;),
+      buttonEl = _self.get(&#39;el&#39;).find(&#39;.&#39; + buttonCls),
+      inputTpl = _self.get(&#39;inputTpl&#39;),
+      name = _self.get(&#39;name&#39;),
+      fileInput;
+
+    inputTpl = BUI.substitute(inputTpl, {
+      name: name
+    });
+
+    buttonEl.append(inputTpl);
+
+    fileInput = buttonEl.find(&#39;input&#39;);
+
+    //TODO:IE6下只有通过脚本和内联样式才能控制按钮大小
+    if(UA.ie == 6){
+      fileInput.css(&#39;fontSize&#39;,&#39;400px&#39;);
+    }
+    _self._bindChangeHandler(fileInput);
+
+    _self.set(&#39;fileInput&#39;, fileInput);
+
+    //因为每选中一次文件后，input[type=file]都会重新生成一遍，所以需要重新设置这些属性
+    _self._uiSetMultiple(_self.get(&#39;multiple&#39;));
+    _self._uiSetDisabled(_self.get(&#39;disabled&#39;));
+    _self._uiSetFilter(_self.get(&#39;filter&#39;));
+  },
+<span id='BUI-Uploader-Button-HtmlButton-method-_bindChangeHandler'>  /**
+</span>   * 绑定input[type=file]的文件选中事件
+   */
+  _bindChangeHandler: function(fileInput) {
+    var _self = this;
+    //上传框的值改变后触发
+    $(fileInput).on(&#39;change&#39;, function(ev){
+      var value = $(this).val(),
+        oFiles = ev.target.files,
+        files = [];
+        
+      //IE取不到files
+      if(oFiles){
+        BUI.each(oFiles, function(v){
+          files.push(File.create({&#39;name&#39;: v.name, &#39;type&#39;: v.type, &#39;size&#39;: v.size, file:v, input: fileInput}));
+        });
+      }else{
+        files.push(File.create({&#39;name&#39;: value, input: fileInput}));
+      }
+      _self.fire(&#39;change&#39;, {
+        files: files,
+        input: this
+      });
+      _self.reset();
+    });
+  },
+  reset: function () {
+    var _self = this,
+      fileInput = _self.get(&#39;fileInput&#39;);
+
+    //移除表单上传域容器
+    fileInput.parent().remove();
+    _self.set(&#39;fileInput&#39;, null);
+    //重新创建表单上传域
+    _self._createInput();
+    return _self;
+  },
+<span id='global-method-_uiSetMultiple'>  /**
+</span>   * 设置上传组件的禁用
+   * @ignore
+   * @param {Boolean} multiple 是否禁用
+   * @return {Boolean}
+   */
+  _uiSetMultiple : function(multiple){
+    var _self = this,
+      fileInput = _self.get(&#39;fileInput&#39;);
+
+    if(!fileInput || !fileInput.length){
+      return false;
+    };
+    if(multiple){
+      fileInput.attr(&#39;multiple&#39;, &#39;multiple&#39;);
+    }
+    else{
+      fileInput.removeAttr(&#39;multiple&#39;);
+    }
+    return multiple;
+  },
+<span id='global-method-_uiSetDisabled'>  /**
+</span>   * @protected
+   * @ignore
+   */
+  _uiSetDisabled: function(v){
+    var _self = this,
+      fileInput = _self.get(&#39;fileInput&#39;);
+    if (v) {
+      fileInput.hide();
+    }
+    else{
+      fileInput.show();
+    }
+  },
+<span id='global-method-_uiSetFilter'>  /**
+</span>   * 设置上传文件的类型
+   * @ignore
+   * @protected
+   * @param {*} filter 可上传文件的类型
+   */
+  _uiSetFilter: function(v){
+    var _self = this,
+      fileInput = _self.get(&#39;fileInput&#39;),
+      filter = _self.getFilter(v);
+    if(!fileInput || !fileInput.length){
+      return false;
+    };
+    //accept是html5的属性，所以ie8以下是不支持的
+    filter.type &amp;&amp; fileInput.attr(&#39;accept&#39;, filter.type);
+    return filter;
+  },
+  _uiSetName: function(v){
+    $(this.get(&#39;fileInput&#39;)).attr(&#39;name&#39;, v)
+  }
+},{
+  ATTRS: {
+<span id='BUI-Uploader-Button-HtmlButton-property-inputTpl'>    /**
+</span>     * 隐藏的表单上传域的模板
+     * @type String
+     */
+    inputTpl: {
+      view: true,
+      value: &#39;&lt;div class=&quot;file-input-wrapper&quot;&gt;&lt;input type=&quot;file&quot; name=&quot;{name}&quot; hidefocus=&quot;true&quot; class=&quot;file-input&quot; /&gt;&lt;/div&gt;&#39;
+    },
+<span id='BUI-Uploader-Button-HtmlButton-property-fileInput'>    /**
+</span>     * 对应的表单上传域
+     * @type {jQuery}
+     */
+    fileInput: {
+    }
+  }
+}, {
+  xclass: &#39;uploader-htmlButton&#39;
+});
+
+module.exports = HtmlButton;
+
+});
+define(&quot;bui/uploader/button/base&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;], function(require, exports, module){
+<span id='BUI'>/**
+</span> * @ignore
+ * @fileoverview 文件上传按钮的基类
+ * @author: 索丘 yezengyue@gmail.com
+ **/
+
+var BUI = require(&quot;bui/common&quot;),
+  Component = BUI.Component,
+  Filter = require(&quot;bui/uploader/button/filter&quot;),
+  PREFIX = BUI.prefix,
+  CLS_UPLOADER = PREFIX + &#39;uploader&#39;,
+  CLS_UPLOADER_BUTTON = CLS_UPLOADER + &#39;-button&#39;,
+  CLS_UPLOADER_BUTTON_TEXT = CLS_UPLOADER_BUTTON + &#39;-text&#39;;
+
+
+var ButtonView = Component.View.extend({
+  _uiSetText: function (v) {
+    var _self = this,
+      text = _self.get(&#39;text&#39;),
+      textCls = _self.get(&#39;textCls&#39;),
+      textEl = _self.get(&#39;el&#39;).find(&#39;.&#39; + textCls);
+    textEl.text(text);
+  }
+},{
+  ATTRS: {
+  }
+},{
+  xclass: &#39;uploader-button-view&#39;
+});
+
+
+<span id='BUI-Uploader-Button'>/**
+</span> * 文件上传按钮的基类
+ * @class BUI.Uploader.Button
+ * @extends BUI.Component.Controller
+ */
+var Button = Component.Controller.extend({
+  
+  getFilter: function(v){
+    if(v){
+      var desc = [],
+        ext = [],
+        type = [];
+      if(v.desc){
+        desc.push(v.desc);
+        ext.push(Filter.getExtByDesc(v.desc));
+        type.push(Filter.getTypeByDesc(v.desc));
+      }
+      if(v.ext){
+        ext.push(v.ext);
+        type.push(Filter.getTypeByExt(v.ext));
+      }
+      if(v.type){
+
+      }
+      return {
+        desc: desc.join(&#39;,&#39;),
+        ext: ext.join(&#39;,&#39;),
+        type: type.join(&#39;,&#39;)
+      }
+    }
+  }
+},{
+  ATTRS: {
+<span id='BUI-Uploader-Button-property-buttonCls'>    /**
+</span>     * 按钮的样式
+     * @protected
+     * @type {String}
+     */
+    buttonCls: {
+      value: CLS_UPLOADER_BUTTON + &#39;-wrap&#39;,
+      view: true
+    },
+<span id='BUI-Uploader-Button-property-textCls'>    /**
+</span>     * 文本的样式
+     * @protected
+     * @type {String}
+     */
+    textCls: {
+      value: CLS_UPLOADER_BUTTON_TEXT,
+      view: true
+    },
+<span id='BUI-Uploader-Button-property-text'>    /**
+</span>     * 显示的文本
+     * @type {String}
+     */
+    text: {
+      view: true,
+      value: &#39;上传文件&#39;
+    },
+<span id='BUI-Uploader-Button-property-name'>    /**
+</span>     * 上传时，提交文件的name值
+     * @type String
+     * @default &quot;Filedata&quot;
+     */
+    name: {
+      value: &#39;fileData&#39;
+    },
+    tpl: {
+      view: true,
+      value: &#39;&lt;a href=&quot;javascript:void(0);&quot; class=&quot;&#39; + CLS_UPLOADER_BUTTON + &#39;-wrap&#39; + &#39;&quot;&gt;&lt;span class=&quot;&#39; + CLS_UPLOADER_BUTTON_TEXT + &#39;&quot;&gt;{text}&lt;/span&gt;&lt;/a&gt;&#39;
+    },
+<span id='BUI-Uploader-Button-property-disabled'>    /**
+</span>     * 是否可用,false为可用
+     * @type Boolean
+     * @default false
+     */
+    disabled : {
+      value : false
+    },
+<span id='BUI-Uploader-Button-property-multiple'>    /**
+</span>     * 是否开启多选支持
+     * @type Boolean
+     * @default true
+     */
+    multiple : {
+      value : true
+    },
+<span id='BUI-Uploader-Button-property-filter'>    /**
+</span>     * 文件过滤
+     * @type Array
+     * @default []
+     */
+    filter : {
+      shared : false,
+      value : []
+    },
+    events: {
+      value: {
+<span id='BUI-Uploader-Button-event-change'>        /**
+</span>         * 选中文件时
+         * @event
+         * @param {Object} e 事件对象
+         * @param {Array} e.files 选中的文件
+         */
+        &#39;change&#39;: false
+      }
+    },
+    xview: {
+      value: ButtonView
+    }
+  }
+},{
+  xclass: &#39;uploader-button&#39;
+});
+
+Button.View = ButtonView;
+
+module.exports = Button;
+
+});
+define(&quot;bui/uploader/button/filter&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;], function(require, exports, module){
+var BUI = require(&quot;bui/common&quot;);
+
+<span id='BUI-Uploader-Filter'>/**
+</span> * @ignore
+ * @class  BUI.Uploader.Filter
+ * @private
+ */
+
+var filter =  {
+  msexcel: {
+    type: &quot;application/msexcel&quot;,
+    ext: &#39;.xls,.xlsx&#39;
+  },
+  msword: {
+    type: &quot;application/msword&quot;,
+    ext: &#39;.doc,.docx&#39;
+  },
+  // {type: &quot;application/pdf&quot;},
+  // {type: &quot;application/poscript&quot;},
+  // {type: &quot;application/rtf&quot;},
+  // {type: &quot;application/x-zip-compressed&quot;},
+  // {type: &quot;audio/basic&quot;},
+  // {type: &quot;audio/x-aiff&quot;},
+  // {type: &quot;audio/x-mpeg&quot;},
+  // {type: &quot;audio/x-pn/},realaudio&quot;
+  // {type: &quot;audio/x-waw&quot;},
+  // image: {
+  //   type: &quot;image/*&quot;,
+  //   ext: &#39;.gif,.jpg,.png,.bmp&#39;
+  // },
+  gif: {
+    type: &quot;image/gif&quot;,
+    ext: &#39;.gif&#39;
+  },
+  jpeg: {
+    type: &quot;image/jpeg&quot;,
+    ext: &#39;.jpg&#39;
+  },
+  // {type: &quot;image/tiff&quot;},
+  bmp: {
+    type: &quot;image/x-ms-bmp&quot;,
+    ext: &#39;.bmp&#39;
+  },
+  //{type: &quot;image/x-photo-cd&quot;},
+  png: {
+    type: &quot;image/png&quot;,
+    ext: &#39;.png&#39;
+  }
+  // {type: &quot;image/x-portablebitmap&quot;},
+  // {type: &quot;image/x-portable-greymap&quot;},
+  // {type: &quot;image/x-portable-pixmap&quot;},
+  // {type: &quot;image/x-rgb&quot;},
+  // {type: &quot;text/html&quot;},
+  // {type: &quot;text/plain&quot;},
+  // {type: &quot;video/quicktime&quot;},
+  // {type: &quot;video/x-mpeg2&quot;},
+  // {type: &quot;video/x-msvideo&quot;}
+}
+
+module.exports = {
+  _getValueByDesc: function(desc, key){
+    var value = [];
+    if(BUI.isString(desc)){
+      desc = desc.split(&#39;,&#39;);
+    }
+    if(BUI.isArray(desc)){
+      BUI.each(desc, function(v, k){
+        var item = filter[v];
+        item &amp;&amp; item[key] &amp;&amp; value.push(item[key]);
+      });
+    }
+    return value.join(&#39;,&#39;);
+  },
+  getTypeByDesc: function(desc){
+    return this._getValueByDesc(desc, &#39;type&#39;);
+  },
+  getExtByDesc: function(desc){
+    return this._getValueByDesc(desc, &#39;ext&#39;);
+  },
+  getTypeByExt: function(ext){
+    var type = [];
+    if(BUI.isString(ext)){
+      ext = ext.split(&#39;,&#39;);
+    };
+    if(BUI.isArray(ext)){
+      BUI.each(ext, function(e){
+        BUI.each(filter, function(item, desc){
+          if(BUI.Array.indexOf(e, item.ext.split(&#39;,&#39;)) &gt; -1){
+            type.push(item.type);
+          }
+        });
+      });
+    };
+    return type.join(&#39;,&#39;);
+  }
+}
+
+});
+define(&quot;bui/uploader/button/swfButton&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;,&quot;bui/swf&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @ignore
+ * @fileoverview flash上传按钮
+ * @author: 索丘 yezengyue@gmail.com
+ **/
+
+var $ = require(&quot;jquery&quot;),
+  BUI = require(&quot;bui/common&quot;),
+  Component = BUI.Component,
+  File = require(&quot;bui/uploader/file&quot;),
+  ButtonBase = require(&quot;bui/uploader/button/base&quot;),
+  baseUrl = getBaseUrl(),
+  SWF = require(&quot;bui/uploader/button/ajbridge&quot;);
+
+function getBaseUrl(){
+  if(window.seajs){
+    if (seajs.pluginSDK &amp;&amp; seajs.pluginSDK.util &amp;&amp; seajs.pluginSDK.util.loaderDir) {
+      return seajs.pluginSDK.util.loaderDir;
+    } else {
+      var paths = seajs.data.paths || {};
+      return paths[&#39;bui&#39;] || seajs.data.base;
+    }
+  }
+  else if(window.KISSY){
+    return KISSY.Config.packages[&#39;bui&#39;].base;
+  }
+}
+
+<span id='BUI-Uploader-Button-SwfButton'>/**
+</span> * 文件上传按钮，flash上传方式使用,使用的是flash
+ * @class BUI.Uploader.Button.SwfButton
+ * @extends BUI.Uploader.Button
+ */
+var SwfButton = ButtonBase.extend({
+  renderUI: function(){
+    var _self = this;
+    _self._initSwfUploader();
+  },
+  bindUI: function(){
+    var _self = this,
+      swfUploader = _self.get(&#39;swfUploader&#39;);
+
+    swfUploader.on(&#39;contentReady&#39;, function(ev){
+      _self.fire(&#39;swfReady&#39;, {swfUploader: swfUploader});
+      swfUploader.on(&#39;fileSelect&#39;, function(ev){
+        var fileList = ev.fileList,
+          files = [];
+        BUI.each(fileList, function(file){
+          files.push(File.create(file));
+        });
+        _self.fire(&#39;change&#39;, {files: files});
+      });
+
+    });
+  },
+  syncUI: function(){
+    var _self = this,
+      swfUploader = _self.get(&#39;swfUploader&#39;);
+    //因为swf加载是个异步的过程，所以加载完后要同步下属性
+    swfUploader.on(&#39;contentReady&#39;, function(ev){
+      _self._uiSetMultiple(_self.get(&#39;multiple&#39;));
+      _self._uiSetFilter(_self.get(&#39;filter&#39;));
+    });
+  },
+  _initSwfUploader: function(){
+    var _self = this,
+      buttonCls = _self.get(&#39;buttonCls&#39;),
+      buttonEl = _self.get(&#39;el&#39;).find(&#39;.&#39; + buttonCls),
+      flashCfg = _self.get(&#39;flash&#39;),
+      flashUrl = _self.get(&#39;flashUrl&#39;),
+      swfTpl = _self.get(&#39;swfTpl&#39;),
+      swfEl = $(swfTpl).appendTo(buttonEl),
+      swfUploader;
+    BUI.mix(flashCfg, {
+      render: swfEl,
+      src: flashUrl
+    });
+    swfUploader = new SWF(flashCfg);
+    _self.set(&#39;swfEl&#39;, swfEl);
+    _self.set(&#39;swfUploader&#39;, swfUploader);
+  },
+  _uiSetMultiple: function(v){
+    var _self = this,
+      swfUploader = _self.get(&#39;swfUploader&#39;);
+    swfUploader &amp;&amp; swfUploader.multifile(v);
+    return v;
+  },
+  _uiSetDisabled: function(v){
+    var _self = this,
+      swfEl = _self.get(&#39;swfEl&#39;);
+    if(v){
+      swfEl.hide();
+    }
+    else{
+       swfEl.show();
+    }
+    return v;
+  },
+  _convertFilter: function(v){
+    var desc = v.desc,
+      ext = [];
+    BUI.each(v.ext.split(&#39;,&#39;), function(item){
+      item &amp;&amp; ext.push(&#39;*&#39; + item);
+    });
+    v.ext = ext.join(&#39;;&#39;);
+    return v;
+  },
+  _uiSetFilter: function(v){
+    var _self = this,
+      swfUploader = _self.get(&#39;swfUploader&#39;),
+      filter = _self._convertFilter(_self.getFilter(v));
+    //flash里需要一个数组
+    // console.log(BUI.JSON.stringify(filter));
+    swfUploader &amp;&amp; swfUploader.filter([filter]);
+    return v;
+  }
+},{
+  ATTRS: {
+    swfEl:{
+    },
+    swfUploader:{
+    },
+<span id='BUI-Uploader-Button-SwfButton-property-flashUrl'>    /**
+</span>     * 上传uploader.swf的路径，默认为bui/uploader/uploader.swf
+     * @type {String} url
+     */
+    flashUrl:{
+      value: baseUrl + &#39;/uploader.swf&#39;
+    },
+<span id='BUI-Uploader-Button-SwfButton-property-flash'>    /**
+</span>     * flash的配置参数，一般不需要修改
+     * @type {Object}
+     */
+    flash:{
+      value:{
+        params:{
+          allowscriptaccess: &#39;always&#39;,
+          bgcolor:&quot;#fff&quot;,
+          wmode:&quot;transparent&quot;,
+          flashvars: {
+            //手型
+            hand:true,
+            //启用按钮模式,激发鼠标事件
+            btn:true,
+            //这里flash全局的回调函数
+            jsEntry: &#39;BUI.AJBridge.eventHandler&#39;
+          }
+        }
+      },
+      shared: false
+    },
+    swfTpl:{
+      view: true,
+      value: &#39;&lt;div class=&quot;uploader-button-swf&quot;&gt;&lt;/div&gt;&#39;
+    }
+  }
+}, {
+  xclass: &#39;uploader-swfButton&#39;
+});
+
+module.exports = SwfButton;
+
+});
+define(&quot;bui/uploader/button/ajbridge&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;,&quot;bui/swf&quot;], function(require, exports, module){
+/*
+Copyright 2011, KISSY UI Library v1.1.5
+MIT Licensed
+build time: Sep 11 10:29
+*/
+var BUI = require(&quot;bui/common&quot;),
+  SWF = require(&quot;bui/swf&quot;);
+
+
+var instances = {};
+
+<span id='BUI-Uploader-AJBridge'>/**
+</span> * @ignore
+ * @class  BUI.Uploader.AJBridge
+ * @private
+ * @author kingfo oicuicu@gmail.com
+ */
+function AJBridge(config){
+  AJBridge.superclass.constructor.call(this, config);
+}
+
+BUI.mix(AJBridge, {
+<span id='BUI-Uploader-AJBridge-method-eventHandler'>  /**
+</span>   * 处理来自 AJBridge 已定义的事件
+   * @param {String} id            swf传出的自身ID
+   * @param {Object} event        swf传出的事件
+   */
+  eventHandler: function(id, event) {
+    var instance = instances[id];
+    if (instance) {
+      instance.__eventHandler(id, event);
+    }
+  },
+<span id='BUI-Uploader-AJBridge-method-augment'>  /**
+</span>   * 批量注册 SWF 公开的方法
+   * @param {Function} C 构造函数
+   * @param {String|Array} methods
+   */
+  augment: function (C, methods) {
+    if (BUI.isString(methods)) {
+      methods = [methods];
+    }
+    if (!BUI.isArray(methods)){
+      return;
+    }
+    BUI.each(methods, function(methodName) {
+      C.prototype[methodName] = function() {
+        try {
+          return this.callSWF(methodName, Array.prototype.slice.call(arguments, 0));
+        } catch(e) { // 当 swf 异常时，进一步捕获信息
+          this.fire(&#39;error&#39;, { message: e });
+        }
+      }
+    });
+  }
+})
+
+BUI.extend(AJBridge, SWF);
+
+BUI.augment(AJBridge, {
+  initializer: function(){
+    AJBridge.superclass.initializer.call(this);
+    var _self = this,
+      attrs = _self.get(&#39;attrs&#39;),
+      id = attrs.id;
+
+    instances[id] = _self;
+
+    _self.set(&#39;id&#39;, id);
+  },
+  __eventHandler: function(id, event){
+    var _self = this,
+      type = event.type;
+  
+    event.id = id;   // 弥补后期 id 使用
+    switch(type){
+      case &quot;log&quot;:
+        BUI.log(event.message);
+        break;
+      default:
+        _self.fire(type, event);
+    }
+  },
+  destroy: function(){
+    AJBridge.superclass.destroy.call(this);
+    var id = this.get(&#39;id&#39;);
+    instances[id] &amp;&amp; delete instances[id];
+  }
+});
+
+// 为静态方法动态注册
+// 注意，只有在 S.ready() 后进行 AJBridge 注册才有效。
+AJBridge.augment(AJBridge, [
+  &#39;activate&#39;,
+  &#39;getReady&#39;,
+  &#39;getCoreVersion&#39;,
+  &#39;setFileFilters&#39;,
+  &#39;filter&#39;,
+  &#39;setAllowMultipleFiles&#39;,
+  &#39;multifile&#39;,
+  &#39;browse&#39;,
+  &#39;upload&#39;,
+  &#39;uploadAll&#39;,
+  &#39;cancel&#39;,
+  &#39;getFile&#39;,
+  &#39;removeFile&#39;,
+  &#39;lock&#39;,
+  &#39;unlock&#39;,
+  &#39;setBtnMode&#39;,
+  &#39;useHand&#39;,
+  &#39;clear&#39;
+]);
+
+//flash里面要调用全局方法BUI.AJBridge.eventHandler,所以挂在BUI下面
+BUI.AJBridge = AJBridge;
+
+module.exports = AJBridge;
+<span id='global-property-'>/**
+</span> * NOTES:
+ * 20130904 从kissy ajbridge模块移植成bui的模块（索丘修改）
+ * @ignore
+ */
+
+});
+define(&quot;bui/uploader/type/ajax&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;], function(require, exports, module){
+<span id='EMPTY'>/**
+</span> * @fileoverview ajax方案上传
+ * @author
+ * @ignore
+ **/
+var EMPTY = &#39;&#39;, LOG_PREFIX = &#39;[uploader-Ajax]:&#39;;
+
+var UploadType = require(&quot;bui/uploader/type/base&quot;);
+
+
+/*function isSubDomain(hostname){
+    return win.location.host === doc.domain;
+}
+
+function endsWith (str, suffix) {
+    var ind = str.length - suffix.length;
+    return ind &gt;= 0 &amp;&amp; str.indexOf(suffix, ind) == ind;
+}*/
+
+<span id='BUI-Uploader-UploadType-Ajax'>/**
+</span> * @class BUI.Uploader.UploadType.Ajax
+ * ajax方案上传
+ * @extends BUI.Uploader.UploadType
+ */
+function AjaxType(config) {
+    var self = this;
+    //调用父类构造函数
+    AjaxType.superclass.constructor.call(self, config);
+}
+
+//继承于Base，属性getter和setter委托于Base处理
+BUI.extend(AjaxType, UploadType,{
+<span id='BUI-Uploader-UploadType-Ajax-method-upload'>    /**
+</span>     * 上传文件
+     * @param {Object} File
+     * @return {BUI.Uploader.UploadType.Ajax}
+     * @chainable
+     */
+    upload : function(file) {
+        //不存在文件信息集合直接退出
+        if (!file || !file.file) {
+            BUI.log(LOG_PREFIX + &#39;upload()，fileData参数有误！&#39;);
+            return false;
+        }
+        var self = this;
+        self.set(&#39;file&#39;, file);
+        self.fire(&#39;start&#39;, {file: file});
+        self._setFormData();
+        self._addFileData(file.file);
+        self.send();
+        return self;
+    },
+<span id='BUI-Uploader-UploadType-Ajax-method-cancel'>    /**
+</span>     * 停止上传
+     * @return {BUI.Uploader.UploadType.Ajax}
+     * @chainable
+     */
+    cancel : function() {
+        var self = this,
+            xhr = self.get(&#39;xhr&#39;),
+            file = self.get(&#39;file&#39;);
+        //中止ajax请求，会触发error事件
+        if(xhr){
+            xhr.abort();
+            self.fire(&#39;cancel&#39;, {file: file});
+        }
+        self.set(&#39;file&#39;, null);
+        return self;
+    },
+<span id='BUI-Uploader-UploadType-Ajax-method-send'>    /**
+</span>     * 发送ajax请求
+     * @return {BUI.Uploader.UploadType.Ajax}
+     * @chainable
+     */
+    send : function() {
+        var self = this,
+            //服务器端处理文件上传的路径
+            url = self.get(&#39;url&#39;),
+            data = self.get(&#39;formData&#39;),
+            file = self.get(&#39;file&#39;);
+        var xhr = new XMLHttpRequest();
+        //TODO:如果使用onProgress存在第二次上传不触发progress事件的问题
+        xhr.upload.addEventListener(&#39;progress&#39;,function(ev){
+            self.fire(&#39;progress&#39;, { &#39;loaded&#39;: ev.loaded, &#39;total&#39;: ev.total });
+        });
+        xhr.onload = function(ev){
+            var result = self._processResponse(xhr.responseText);
+            self.fire(&#39;complete&#39;, {result: result, file: file});
+        };
+        xhr.onerror = function(ev){
+            self.fire(&#39;error&#39;, {file: file});
+        }
+        xhr.open(&quot;POST&quot;, url, true);
+        xhr.send(data);
+        // 重置FormData
+        self._setFormData();
+        self.set(&#39;xhr&#39;,xhr);
+        return self;
+    },
+    reset: function(){
+    },
+<span id='BUI-Uploader-UploadType-Ajax-method-_setFormData'>    /**
+</span>     * 设置FormData数据
+     * @private
+     */
+    _setFormData:function(){
+        var self = this;
+        try{
+        	self.set(&#39;formData&#39;, new FormData());
+            self._processData();
+        }catch(e){
+        	BUI.log(LOG_PREFIX + &#39;something error when reset FormData.&#39;);
+        	BUI.log(e, &#39;dir&#39;);
+       }
+    },
+<span id='BUI-Uploader-UploadType-Ajax-method-_processData'>    /**
+</span>     * 处理传递给服务器端的参数
+     */
+    _processData : function() {
+        var self = this,data = self.get(&#39;data&#39;),
+            formData = self.get(&#39;formData&#39;);
+        //将参数添加到FormData的实例内
+        BUI.each(data, function(val, key) {
+            formData.append(key, val);
+        });
+        self.set(&#39;formData&#39;, formData);
+    },
+<span id='BUI-Uploader-UploadType-Ajax-method-_addFileData'>    /**
+</span>     * 将文件信息添加到FormData内
+     * @param {Object} file 文件信息
+     */
+    _addFileData : function(file) {
+        if (!file) {
+            BUI.log(LOG_PREFIX + &#39;_addFileData()，file参数有误！&#39;);
+            return false;
+        }
+        var self = this,
+            formData = self.get(&#39;formData&#39;),
+            fileDataName = self.get(&#39;fileDataName&#39;);
+        formData.append(fileDataName, file);
+        self.set(&#39;formData&#39;, formData);
+    }
+}, {ATTRS :{
+<span id='BUI-Uploader-UploadType-Ajax-property-formData'>    /**
+</span>     * 表单数据对象
+     */
+    formData: {
+    },
+    xhr: {
+    },
+    events: {
+        value: {
+<span id='BUI-Uploader-UploadType-Ajax-event-progress'>            /**
+</span>             * 上传正在上传时
+             * @event
+             * @param {Object} e 事件对象
+             * @param {Number} total 文件的总大小
+             * @param {Number} loaded 已经上传的大小
+             */
+            progress: false
+        }
+    }//,
+    // subDomain: {
+    //     value: {
+    //         proxy: &#39;/sub_domain_proxy.html&#39;
+    //     }
+    // }
+}
+});
+module.exports = AjaxType;
+
+});
+define(&quot;bui/uploader/type/base&quot;, [&quot;bui/common&quot;,&quot;jquery&quot;], function(require, exports, module){
+<span id='BUI'>/**
+</span> * @fileoverview 上传方式类的基类
+ * @ignore
+ **/
+
+var BUI = require(&quot;bui/common&quot;);
+<span id='BUI-Uploader-UploadType'>/**
+</span> * @class BUI.Uploader.UploadType
+ *  上传方式类的基类，定义通用的事件和方法，一般不直接监听此类的事件
+ * @extends BUI.Base
+ */
+function UploadType(config) {
+  var _self = this;
+  //调用父类构造函数
+  UploadType.superclass.constructor.call(_self, config);
+}
+
+UploadType.ATTRS = {
+<span id='BUI-Uploader-UploadType-property-file'>  /**
+</span>   * 当前处理的文件
+   * @type {Object}
+   */
+  file: {
+  },
+<span id='BUI-Uploader-UploadType-property-url'>  /**
+</span>   * 服务器端路径
+   * @type String
+   * @default &quot;&quot;
+   */
+  url: {
+  },
+<span id='BUI-Uploader-UploadType-property-data'>  /**
+</span>   * 传送给服务器端的参数集合（会被转成hidden元素post到服务器端）
+   * @type Object
+   * @default {}
+   */
+  data: {
+  },
+  fileDataName: {
+    value: &#39;Filedata&#39;
+  },
+  events: {
+    value: {
+<span id='BUI-Uploader-UploadType-event-start'>      /**
+</span>       * 开始上传后触发
+       * @event
+       * @param {Object} e 事件对象
+       */
+      start: false,
+<span id='BUI-Uploader-UploadType-event-cancel'>      /**
+</span>       * 停止上传后触发
+       * @event
+       * @param {Object} e 事件对象
+       */
+      cancel: false,
+<span id='BUI-Uploader-UploadType-event-success'>      /**
+</span>       * 上传成功后触发
+       * @event
+       * @param {Object} e 事件对象
+       */
+      success: false,
+<span id='BUI-Uploader-UploadType-event-error'>      /**
+</span>       * 上传失败后触发
+       * @event
+       * @param {Object} e 事件对象
+       */
+      error: false
+    }
+  }
+}
+
+
+//继承于Base，属性getter和setter委托于Base处理
+BUI.extend(UploadType, BUI.Base, {
+<span id='BUI-Uploader-UploadType-method-upload'>  /**
+</span>   * 上传文件
+   * @param {Object} File 数据对像
+   * @description
+   * 因为每种上传类型需要的数据都不一样，
+   * Ajax需要File对像，
+   * Iframe需要input[type=file]对像
+   * 所以为了保持接口的一致性，这里的File对像不是浏览器原生的File对像，而是包含File和input的对像
+   * 类似{name: &#39;test.jpg&#39;, size: 1024, textSize: &#39;1K&#39;, input: {}, file: File}
+   */
+  upload: function(File) {
+  },
+<span id='BUI-Uploader-UploadType-method-cancel'>  /** 
+</span>   * 停止上传
+   */
+  cancel: function(){
+  },
+<span id='BUI-Uploader-UploadType-method-_processResponse'>  /**
+</span>   * 处理服务器端返回的结果集
+   * @private
+   */
+  _processResponse: function(responseText){
+    var _self = this,
+      file = _self.get(&#39;file&#39;),
+      result;
+    //格式化成json数据
+    if(BUI.isString(responseText)){
+      try{
+        result = BUI.JSON.parse(responseText);
+        // result = _self._fromUnicode(result);
+      }catch(e){
+        result = responseText;
+      }
+    }else if(BUI.isObject(responseText)){
+      result = _self._fromUnicode(responseText);
+    }
+    BUI.log(&#39;服务器端输出：&#39; + BUI.JSON.stringify(result));
+    return result;
+  },
+<span id='BUI-Uploader-UploadType-method-_fromUnicode'>  /**
+</span>   * 将unicode的中文转换成正常显示的文字，（为了修复flash的中文乱码问题）
+   * @private
+   */
+  _fromUnicode:function(data){
+      if(!BUI.isObject(data)) return data;
+      _each(data);
+      function _each(data){
+          BUI.each(data,function(v,k){
+              if(BUI.isObject(data[k])){
+                  _each(data[k]);
+              }else{
+                  data[k] = BUI.isString(v) &amp;&amp; BUI.fromUnicode(v) || v;
+              }
+          });
+      }
+      return data;
+  },
+  reset: function(){
+  }
+});
+
+module.exports = UploadType;
+
+});
+define(&quot;bui/uploader/type/flash&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @ignore
+ * @fileoverview flash上传方案
+ * @author 
+ **/
+var $ = require(&quot;jquery&quot;),
+    UploadType = require(&quot;bui/uploader/type/base&quot;);
+
+var LOG_PREFIX = &#39;[uploader-Flash]:&#39;;
+
+
+//获取链接绝对路径正则
+var URI_SPLIT_REG = new RegExp(&#39;^([^?#]+)?(?:\\?([^#]*))?(?:#(.*))?$&#39;),
+    HOSTNAME_SPLIT_REG = new RegExp(&#39;^(?:([\\w\\d+.-]+):)?(?://([\\w\\d\\-\\u0100-\\uffff.+%]*))?.*$&#39;);
+
+<span id='BUI-Uploader-UploadType-Flash'>/**
+</span> * @class BUI.Uploader.UploadType.Flash
+ * flash上传方案
+ * 使用时要确认flash与提交的url是否跨越，如果跨越则需要设置crossdomain.xml
+ * @extends BUI.Uploader.UploadType
+ */
+function FlashType(config) {
+    var _self = this;
+    //调用父类构造函数
+    FlashType.superclass.constructor.call(_self, config);
+}
+
+BUI.extend(FlashType, UploadType, {
+<span id='BUI-Uploader-UploadType-Flash-method-_initSwfUploader'>    /**
+</span>     * 初始化
+     */
+    _initSwfUploader:function () {
+        var _self = this, swfUploader = _self.get(&#39;swfUploader&#39;);
+        if(!swfUploader){
+            BUI.log(LOG_PREFIX + &#39;swfUploader对象为空！&#39;);
+            return false;
+        }
+        //初始化swf时swf已经ready，所以这里直接fire swfReady事件
+        _self.fire(&#39;swfReady&#39;);
+
+        //测试是否存在crossdomain.xml
+        _self._hasCrossdomain();
+
+        //监听开始上传事件
+        swfUploader.on(&#39;uploadStart&#39;, function(ev){
+            var file = _self.get(&#39;file&#39;);
+            _self.fire(&#39;start&#39;, {file: file});
+        });
+        //监听文件正在上传事件
+        swfUploader.on(&#39;uploadProgress&#39;, function(ev){
+            BUI.mix(ev, {
+                //已经读取的文件字节数
+                loaded:ev.bytesLoaded,
+                //文件总共字节数
+                total : ev.bytesTotal
+            });
+            BUI.log(LOG_PREFIX + &#39;已经上传字节数为：&#39; + ev.bytesLoaded);
+            _self.fire(&#39;progress&#39;, { &#39;loaded&#39;:ev.loaded, &#39;total&#39;:ev.total });
+        });
+        //监听文件上传完成事件
+        swfUploader.on(&#39;uploadCompleteData&#39;, function(ev){
+            var file = _self.get(&#39;file&#39;),
+                result = _self._processResponse(ev.data);
+            _self.fire(&#39;complete&#39;, {result: result, file: file});
+            _self.set(&#39;file&#39;, null);
+        });
+        //监听文件失败事件
+        swfUploader.on(&#39;uploadError&#39;,function(){
+            var file = _self.get(&#39;file&#39;);
+            _self.fire(&#39;error&#39;, {file: file});
+            _self.set(&#39;file&#39;, null);
+        });
+    },
+<span id='BUI-Uploader-UploadType-Flash-method-upload'>    /**
+</span>     * 上传文件
+     * @param {String} id 文件id
+     * @return {BUI.Uploader.UploadType.Flash}
+     * @chainable
+     */
+    upload:function (file) {
+        var _self = this,
+            swfUploader = _self.get(&#39;swfUploader&#39;),
+            url = _self.get(&#39;url&#39;),
+            method = &#39;POST&#39;,
+            data = _self.get(&#39;data&#39;),
+            name = _self.get(&#39;fileDataName&#39;);
+        if(!file){
+            return;
+        }
+        _self.set(&#39;file&#39;, file);
+        swfUploader.upload(file.id, url, method, data, name);
+        return _self;
+    },
+<span id='BUI-Uploader-UploadType-Flash-method-cancel'>    /**
+</span>     * 停止上传文件
+     * @return {BUI.Uploader.UploadType.Flash}
+     * @chainable
+     */
+    cancel: function () {
+        var _self = this,
+            swfUploader = _self.get(&#39;swfUploader&#39;),
+            file = _self.get(&#39;file&#39;);
+        if(file){
+            swfUploader.cancel(file.id);
+            _self.fire(&#39;cancel&#39;, {file: file});
+            _self.set(&#39;file&#39;, null);
+        }
+        return _self;
+    },
+<span id='BUI-Uploader-UploadType-Flash-method-_hasCrossdomain'>    /**
+</span>     * 应用是否有flash跨域策略文件
+     * @private
+     * 2014-01-13 应该判断swf的路径上提交上传接口的路径是否同域
+     */
+    _hasCrossdomain: function(){
+        var _self = this,
+
+            // http://g.tbcdn.cn/fi/bui/upload.php =&gt; [&#39;http://g.tbcdn.cn/fi/bui/upload.php&#39;, &#39;http&#39;, &#39;g.tbcdn.cn&#39;]
+            url = _self.get(&#39;url&#39;).match(HOSTNAME_SPLIT_REG) || [],
+            flashUrl = _self.get(&#39;swfUploader&#39;).get(&#39;src&#39;).match(HOSTNAME_SPLIT_REG) || [],
+            urlDomain = url[2],
+            flashUrlDomain = flashUrl[2];
+
+        //不同域时才去校验crossdomain
+        if(urlDomain &amp;&amp; flashUrlDomain &amp;&amp; urlDomain !== flashUrlDomain){
+            $.ajax({
+                url: url[1] + &#39;://&#39; + urlDomain + &#39;/crossdomain.xml&#39;,
+                dataType:&quot;xml&quot;,
+                error:function(){
+                   BUI.log(&#39;缺少crossdomain.xml文件或该文件不合法！&#39;);
+                }
+            });
+        }
+    }
+}, {ATTRS:{
+    uploader: {
+        setter: function(v){
+            var _self = this;
+            if(v &amp;&amp; v.isController){
+                //因为flash上传需要依赖swfButton，所以是要等flash加载完成后才可以初始化的
+                var swfButton = v.get(&#39;button&#39;);
+                swfButton.on(&#39;swfReady&#39;, function(ev){
+                    _self.set(&#39;swfUploader&#39;, ev.swfUploader);
+                    _self._initSwfUploader();
+                });
+            }
+        }
+    },
+<span id='BUI-Uploader-UploadType-Flash-property-url'>    /**
+</span>     * 服务器端路径，留意flash必须是绝对路径
+     */
+    url:{
+        setter: function(v){
+            var reg = /^http/;
+            //不是绝对路径拼接成绝对路径
+            if(!reg.test(v)){
+                //获取前面url部份
+                //修复下如下链接问题：http://a.b.com/a.html?a=a/b/c#d/e/f =&gt; http://a.b.com/a.html
+                var href = location.href.match(URI_SPLIT_REG) || [],
+                    path = href[1] || &#39;&#39;,
+                    uris = path.split(&#39;/&#39;),
+                    newUris;
+                newUris  = BUI.Array.filter(uris,function(item,i){
+                    return i &lt; uris.length - 1;
+                });
+                v = newUris.join(&#39;/&#39;) + &#39;/&#39; + v;
+            }
+            return v;
+        }
+    },
+<span id='BUI-Uploader-UploadType-Flash-property-swfUploader'>    /**
+</span>     * ajbridge的uploader组件的实例，必须参数
+     */
+    swfUploader:{},
+<span id='BUI-Uploader-UploadType-Flash-property-uploadingId'>    /**
+</span>     * 正在上传的文件id
+     */
+    uploadingId : {},
+<span id='BUI-Uploader-UploadType-Flash-property-events'>    /**
+</span>     * 事件列表
+     */
+    events:{
+        value: {
+            //swf文件已经准备就绪
+            swfReady: false,
+<span id='BUI-Uploader-UploadType-Flash-event-progress'>            /**
+</span>             * 上传正在上传时
+             * @event
+             * @param {Object} e 事件对象
+             * @param {Number} total 文件的总大小
+             * @param {Number} loaded 已经上传的大小
+             */
+            progress: false
+        }
+    }
+}});
+
+module.exports = FlashType;
+
+});
+define(&quot;bui/uploader/type/iframe&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @fileoverview iframe方案上传
+ * @ignore
+ **/
+var $ = require(&quot;jquery&quot;),
+    UploadType = require(&quot;bui/uploader/type/base&quot;);
+
+var ID_PREFIX = &#39;bui-uploader-iframe-&#39;;
+
+<span id='BUI-Uploader-UploadType-Iframe'>/**
+</span> * @class BUI.Uploader.UploadType.Iframe
+ * iframe方案上传，全浏览器支持
+ * @extends BUI.Uploader.UploadType
+ *
+ */
+function IframeType(config) {
+    var _self = this;
+    //调用父类构造函数
+    IframeType.superclass.constructor.call(_self, config);
+}
+
+//继承于Base，属性getter和setter委托于Base处理
+BUI.extend(IframeType, UploadType,{
+<span id='BUI-Uploader-UploadType-Iframe-method-upload'>    /**
+</span>     * 上传文件
+     * @param {HTMLElement} fileInput 文件input
+     */
+    upload : function(file) {
+        var _self = this,
+            input = file.input,
+            form;
+        if (!file){
+            return false
+        };
+        _self.fire(&#39;start&#39;, {file: file});
+        _self.set(&#39;file&#39;, file);
+        _self.set(&#39;fileInput&#39;, input);
+        //创建iframe和form
+        _self._create();
+        form = _self.get(&#39;form&#39;);
+        //提交表单到iframe内
+        form &amp;&amp; form[0].submit();
+    },
+<span id='BUI-Uploader-UploadType-Iframe-method-cancel'>    /**
+</span>     * 取消上传
+     * @return {BUI.Uploader.UploadType.Iframe}
+     */
+    cancel : function() {
+        var self = this,iframe = self.get(&#39;iframe&#39;);
+        //iframe.attr(&#39;src&#39;, &#39;javascript:&quot;&lt;html&gt;&lt;/html&gt;&quot;;&#39;);
+        self.reset();
+        self.fire(&#39;cancel&#39;);
+        // self.fire(&#39;error&#39;, {status : &#39;abort&#39;,msg : &#39;上传失败，原因：abort&#39;});
+        return self;
+    },
+<span id='BUI-Uploader-UploadType-Iframe-method-dataToHidden'>    /**
+</span>     * 将参数数据转换成hidden元素
+     * @param {Object} data 对象数据
+     * @return {String} hiddenInputHtml hidden元素html片段
+     */
+    dataToHidden : function(data) {
+        if (!$.isPlainObject(data) || $.isEmptyObject(data)) return &#39;&#39;;
+        var self = this,
+            hiddenInputHtml = [],
+            //hidden元素模板
+            tpl = self.get(&#39;tpl&#39;),
+            hiddenTpl = tpl.HIDDEN_INPUT;
+        if (!BUI.isString(hiddenTpl)) return &#39;&#39;;
+        for (var k in data) {
+            hiddenInputHtml.push(BUI.substitute(hiddenTpl, {&#39;name&#39; : k,&#39;value&#39; : data[k]}));
+        }
+        return hiddenInputHtml.join();
+    },
+<span id='BUI-Uploader-UploadType-Iframe-method-_createIframe'>    /**
+</span>     * 创建一个空的iframe，用于文件上传表单提交后返回服务器端数据
+     * @return {NodeList}
+     */
+    _createIframe : function() {
+        var self = this,
+            //iframe的id
+            id = ID_PREFIX + BUI.guid(),
+            //iframe模板
+            tpl = self.get(&#39;tpl&#39;),
+            iframeTpl = tpl.IFRAME,
+            existIframe = self.get(&#39;iframe&#39;),
+            iframe;
+        //先判断是否已经存在iframe，存在直接返回iframe
+        if (!$.isEmptyObject(existIframe)) return existIframe;
+
+        //创建处理上传的iframe
+        iframe = $(BUI.substitute(tpl.IFRAME, { &#39;id&#39; : id }));
+        //监听iframe的load事件
+        $(&#39;body&#39;).append(iframe);
+        iframe.on(&#39;load&#39;, function(ev){
+            self._iframeLoadHandler(ev);
+        });
+        self.set(&#39;id&#39;,id);
+        self.set(&#39;iframe&#39;, iframe);
+        return iframe;
+    },
+<span id='BUI-Uploader-UploadType-Iframe-method-_iframeLoadHandler'>    /**
+</span>     * iframe加载完成后触发（文件上传结束后）
+     */
+    _iframeLoadHandler : function(ev) {
+        var self = this,iframe = ev.target,
+            doc = iframe.contentDocument || window.frames[iframe.id].document,
+            result;
+        if (!doc || !doc.body) {
+            self.fire(&#39;error&#39;, {msg : &#39;服务器端返回数据有问题！&#39;});
+            return false;
+        }
+        var response = doc.body.innerHTML;
+        //输出为直接退出
+        if(response == &#39;&#39;){
+            self.fire(&#39;error&#39;);
+            return;
+        };
+        result = self._processResponse(response);
+
+        self.fire(&#39;complete&#39;, {result: result, file: self.get(&#39;file&#39;)});
+        self.reset();
+    },
+<span id='BUI-Uploader-UploadType-Iframe-method-_createForm'>    /**
+</span>     * 创建文件上传表单
+     * @return {NodeList}
+     */
+    _createForm : function() {
+        var self = this,
+            //iframe的id
+            id = self.get(&#39;id&#39;),
+            //form模板
+            tpl = self.get(&#39;tpl&#39;),formTpl = tpl.FORM,
+            //想要传送给服务器端的数据
+            data = self.get(&#39;data&#39;),
+            //服务器端处理文件上传的路径
+            action = self.get(&#39;url&#39;),
+            fileInput = self.get(&#39;fileInput&#39;),
+            hiddens,
+            form;
+        if (!BUI.isString(formTpl)) {
+            return false;
+        }
+        if (!BUI.isString(action)) {
+            return false;
+        }
+        hiddens = self.dataToHidden(data);
+        hiddens += self.dataToHidden({&quot;type&quot;:&quot;iframe&quot;});
+        form = BUI.substitute(formTpl, {&#39;action&#39; : action,&#39;target&#39; : id,&#39;hiddenInputs&#39; : hiddens});
+        //克隆文件域，并添加到form中
+        form = $(form).append(fileInput);
+        $(&#39;body&#39;).append(form);
+        self.set(&#39;form&#39;, form);
+        return form;
+    },
+<span id='BUI-Uploader-UploadType-Iframe-method-_create'>    /**
+</span>     * 创建iframe和form
+     */
+    _create : function() {
+        var _self = this,
+            iframe = _self._createIframe(),
+            form = _self._createForm();
+
+        _self.fire(&#39;create&#39;, {iframe : iframe,form : form});
+    },
+<span id='BUI-Uploader-UploadType-Iframe-method-_remove'>    /**
+</span>     * 移除表单
+     */
+    _remove : function() {
+        var self = this,form = self.get(&#39;form&#39;);
+        if(!form)return false;
+        //移除表单
+        form.remove();
+        //重置form属性
+        self.set(&#39;form&#39;, null);
+        self.fire(&#39;remove&#39;, {form : form});
+    },
+    reset: function(){
+        var _self = this;
+        _self._remove();
+        _self.set(&#39;file&#39;, null);
+    }
+}, {ATTRS : {
+<span id='BUI-Uploader-UploadType-Iframe-property-tpl'>    /**
+</span>     * iframe方案会用到的html模板，一般不需要修改
+     * @type {String}
+     * @default
+     * {
+     *   IFRAME : &#39;&lt;iframe src=&quot;javascript:false;&quot; name=&quot;{id}&quot; id=&quot;{id}&quot; border=&quot;no&quot; width=&quot;1&quot; height=&quot;1&quot; style=&quot;display: none;&quot; /&gt;&#39;,
+     *   FORM : &#39;&lt;form method=&quot;post&quot; enctype=&quot;multipart/form-data&quot; action=&quot;{action}&quot; target=&quot;{target}&quot;&gt;{hiddenInputs}&lt;/form&gt;&#39;,
+     *   HIDDEN_INPUT : &#39;&lt;input type=&quot;hidden&quot; name=&quot;{name}&quot; value=&quot;{value}&quot; /&gt;&#39;
+     * }
+     */
+    tpl: {
+        value: {
+            IFRAME : &#39;&lt;iframe src=&quot;javascript:false;&quot; name=&quot;{id}&quot; id=&quot;{id}&quot; border=&quot;no&quot; width=&quot;1&quot; height=&quot;1&quot; style=&quot;display: none;&quot; /&gt;&#39;,
+            FORM : &#39;&lt;form method=&quot;post&quot; enctype=&quot;multipart/form-data&quot; action=&quot;{action}&quot; target=&quot;{target}&quot; style=&quot;visibility: hidden;&quot;&gt;{hiddenInputs}&lt;/form&gt;&#39;,
+            HIDDEN_INPUT : &#39;&lt;input type=&quot;hidden&quot; name=&quot;{name}&quot; value=&quot;{value}&quot; /&gt;&#39;
+        }
+    },
+<span id='BUI-Uploader-UploadType-Iframe-property-id'>    /**
+</span>     * 只读，创建的iframeid,id为组件自动创建
+     * @type {String}
+     * @default  &#39;ks-uploader-iframe-&#39; +随机id
+     */
+    id: {value : ID_PREFIX + BUI.guid()},
+<span id='BUI-Uploader-UploadType-Iframe-property-iframe'>    /**
+</span>     * iframe
+     */
+    iframe: {value : {}},
+    form: {},
+    fileInput: {},
+    events: {
+        value: {
+<span id='BUI-Uploader-UploadType-Iframe-event-create'>            /**
+</span>             * 创建iframe和form后触发
+             * @event
+             * @param {Object} e 事件对象
+             */
+            create: false,
+<span id='BUI-Uploader-UploadType-Iframe-event-remove'>            /**
+</span>             * 删除form后触发
+             * @event
+             * @param {Object} e 事件对象
+             */
+            remove: false
+        }
+    }
+}});
+
+module.exports = IframeType;
+
+});
+define(&quot;bui/uploader/button/uploadify&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @ignore
+ * @fileoverview swfupload的上传
+ * @author: 索丘 yezengyue@gmail.com
+ **/
+
+var $ = require(&quot;jquery&quot;),
+  BUI = require(&quot;bui/common&quot;),
+  Component = BUI.Component,
+  File = require(&quot;bui/uploader/file&quot;),
+  ButtonBase = require(&quot;bui/uploader/button/base&quot;),
+  baseUrl = getBaseUrl(),
+  UploadifyPlugin = require(&quot;bui/uploader/plugins/uploadify&quot;);
+
+function getBaseUrl(){
+  if(window.seajs){
+    if (seajs.pluginSDK &amp;&amp; seajs.pluginSDK.util &amp;&amp; seajs.pluginSDK.util.loaderDir) {
+      return seajs.pluginSDK.util.loaderDir;
+    } else {
+      var paths = seajs.data.paths || {};
+      return paths[&#39;bui&#39;] || seajs.data.base;
+    }
+  }
+  else if(window.KISSY){
+    return KISSY.Config.packages[&#39;bui&#39;].base;
+  }
+}
+
+<span id='BUI-Uploader-Button-Uploadify'>/**
+</span> * 文件上传按钮，flash上传方式使用,使用的是flash
+ * @class BUI.Uploader.Button.Uploadify
+ * @extends BUI.Uploader.Button
+ */
+var Uploadify = ButtonBase.extend({
+  renderUI: function(){
+    var _self = this,
+      buttonCls = _self.get(&#39;buttonCls&#39;),
+      buttonEl = _self.get(&#39;el&#39;).find(&#39;.&#39; + buttonCls),
+      flashCfg = _self.get(&#39;flash&#39;),
+      flashUrl = _self.get(&#39;flashUrl&#39;),
+      swfTpl = _self.get(&#39;swfTpl&#39;),
+      swfEl = $(swfTpl).appendTo(buttonEl),
+      uploadifyEl = swfEl.find(&#39;input&#39;),
+      uploader = _self.get(&#39;uploader&#39;);
+
+    var name = _self.get(&#39;name&#39;);
+
+    // console.log(uploader);
+
+    uploadifyEl.attr(&#39;name&#39;, name);
+    uploadifyEl.attr(&#39;id&#39;, BUI.guid(&#39;bui-uploadify&#39;));
+
+
+    // uploadifyEl.uploadify({
+    //   swf: flashUrl,
+    //   uploader: uploader.get(&#39;url&#39;),
+    //   onSelect: function (file) {
+    //     var files = [];
+    //     files.push(File.create(file));
+    //     _self.fire(&#39;change&#39;, {files: files});
+    //   }
+    // });
+    // 
+    
+    _self.set(&#39;uploadifyEl&#39;, uploadifyEl);
+
+
+
+    // console.log(UploadifyPlugin);
+  }
+},{
+  ATTRS: {
+    name: {},
+    uploader: {
+    },
+    swfEl:{
+    },
+<span id='BUI-Uploader-Button-Uploadify-property-flashUrl'>    /**
+</span>     * 上传uploader.swf的路径，默认为bui/uploader/uploader.swf
+     * @type {String} url
+     */
+    flashUrl:{
+      value: baseUrl + &#39;/uploadify.swf&#39;
+    },
+    swfTpl:{
+      view: true,
+      value: &#39;&lt;div class=&quot;uploader-button-swf&quot;&gt;&lt;input type=&quot;file&quot;/&gt;&lt;/div&gt;&#39;
+    }
+  }
+}, {
+  xclass: &#39;uploader-uploadify&#39;
+});
+
+module.exports = Uploadify;
+
+});
+define(&quot;bui/uploader/plugins/uploadify&quot;, [&quot;jquery&quot;], function(require, exports, module){
+/*
+SWFObject v2.2 &lt;http://code.google.com/p/swfobject/&gt; 
+is released under the MIT License &lt;http://www.opensource.org/licenses/mit-license.php&gt; 
+*/
+;var swfobject=function(){var D=&quot;undefined&quot;,r=&quot;object&quot;,S=&quot;Shockwave Flash&quot;,W=&quot;ShockwaveFlash.ShockwaveFlash&quot;,q=&quot;application/x-shockwave-flash&quot;,R=&quot;SWFObjectExprInst&quot;,x=&quot;onreadystatechange&quot;,O=window,j=document,t=navigator,T=false,U=[h],o=[],N=[],I=[],l,Q,E,B,J=false,a=false,n,G,m=true,M=function(){var aa=typeof j.getElementById!=D&amp;&amp;typeof j.getElementsByTagName!=D&amp;&amp;typeof j.createElement!=D,ah=t.userAgent.toLowerCase(),Y=t.platform.toLowerCase(),ae=Y?/win/.test(Y):/win/.test(ah),ac=Y?/mac/.test(Y):/mac/.test(ah),af=/webkit/.test(ah)?parseFloat(ah.replace(/^.*webkit\/(\d+(\.\d+)?).*$/,&quot;$1&quot;)):false,X=!+&quot;\v1&quot;,ag=[0,0,0],ab=null;
+if(typeof t.plugins!=D&amp;&amp;typeof t.plugins[S]==r){ab=t.plugins[S].description;if(ab&amp;&amp;!(typeof t.mimeTypes!=D&amp;&amp;t.mimeTypes[q]&amp;&amp;!t.mimeTypes[q].enabledPlugin)){T=true;
+X=false;ab=ab.replace(/^.*\s+(\S+\s+\S+$)/,&quot;$1&quot;);ag[0]=parseInt(ab.replace(/^(.*)\..*$/,&quot;$1&quot;),10);ag[1]=parseInt(ab.replace(/^.*\.(.*)\s.*$/,&quot;$1&quot;),10);
+ag[2]=/[a-zA-Z]/.test(ab)?parseInt(ab.replace(/^.*[a-zA-Z]+(.*)$/,&quot;$1&quot;),10):0;}}else{if(typeof O.ActiveXObject!=D){try{var ad=new ActiveXObject(W);if(ad){ab=ad.GetVariable(&quot;$version&quot;);
+if(ab){X=true;ab=ab.split(&quot; &quot;)[1].split(&quot;,&quot;);ag=[parseInt(ab[0],10),parseInt(ab[1],10),parseInt(ab[2],10)];}}}catch(Z){}}}return{w3:aa,pv:ag,wk:af,ie:X,win:ae,mac:ac};
+}(),k=function(){if(!M.w3){return;}if((typeof j.readyState!=D&amp;&amp;j.readyState==&quot;complete&quot;)||(typeof j.readyState==D&amp;&amp;(j.getElementsByTagName(&quot;body&quot;)[0]||j.body))){f();
+}if(!J){if(typeof j.addEventListener!=D){j.addEventListener(&quot;DOMContentLoaded&quot;,f,false);}if(M.ie&amp;&amp;M.win){j.attachEvent(x,function(){if(j.readyState==&quot;complete&quot;){j.detachEvent(x,arguments.callee);
+f();}});if(O==top){(function(){if(J){return;}try{j.documentElement.doScroll(&quot;left&quot;);}catch(X){setTimeout(arguments.callee,0);return;}f();})();}}if(M.wk){(function(){if(J){return;
+}if(!/loaded|complete/.test(j.readyState)){setTimeout(arguments.callee,0);return;}f();})();}s(f);}}();function f(){if(J){return;}try{var Z=j.getElementsByTagName(&quot;body&quot;)[0].appendChild(C(&quot;span&quot;));
+Z.parentNode.removeChild(Z);}catch(aa){return;}J=true;var X=U.length;for(var Y=0;Y&lt;X;Y++){U[Y]();}}function K(X){if(J){X();}else{U[U.length]=X;}}function s(Y){if(typeof O.addEventListener!=D){O.addEventListener(&quot;load&quot;,Y,false);
+}else{if(typeof j.addEventListener!=D){j.addEventListener(&quot;load&quot;,Y,false);}else{if(typeof O.attachEvent!=D){i(O,&quot;onload&quot;,Y);}else{if(typeof O.onload==&quot;function&quot;){var X=O.onload;
+O.onload=function(){X();Y();};}else{O.onload=Y;}}}}}function h(){if(T){V();}else{H();}}function V(){var X=j.getElementsByTagName(&quot;body&quot;)[0];var aa=C(r);
+aa.setAttribute(&quot;type&quot;,q);var Z=X.appendChild(aa);if(Z){var Y=0;(function(){if(typeof Z.GetVariable!=D){var ab=Z.GetVariable(&quot;$version&quot;);if(ab){ab=ab.split(&quot; &quot;)[1].split(&quot;,&quot;);
+M.pv=[parseInt(ab[0],10),parseInt(ab[1],10),parseInt(ab[2],10)];}}else{if(Y&lt;10){Y++;setTimeout(arguments.callee,10);return;}}X.removeChild(aa);Z=null;H();
+})();}else{H();}}function H(){var ag=o.length;if(ag&gt;0){for(var af=0;af&lt;ag;af++){var Y=o[af].id;var ab=o[af].callbackFn;var aa={success:false,id:Y};if(M.pv[0]&gt;0){var ae=c(Y);
+if(ae){if(F(o[af].swfVersion)&amp;&amp;!(M.wk&amp;&amp;M.wk&lt;312)){w(Y,true);if(ab){aa.success=true;aa.ref=z(Y);ab(aa);}}else{if(o[af].expressInstall&amp;&amp;A()){var ai={};ai.data=o[af].expressInstall;
+ai.width=ae.getAttribute(&quot;width&quot;)||&quot;0&quot;;ai.height=ae.getAttribute(&quot;height&quot;)||&quot;0&quot;;if(ae.getAttribute(&quot;class&quot;)){ai.styleclass=ae.getAttribute(&quot;class&quot;);}if(ae.getAttribute(&quot;align&quot;)){ai.align=ae.getAttribute(&quot;align&quot;);
+}var ah={};var X=ae.getElementsByTagName(&quot;param&quot;);var ac=X.length;for(var ad=0;ad&lt;ac;ad++){if(X[ad].getAttribute(&quot;name&quot;).toLowerCase()!=&quot;movie&quot;){ah[X[ad].getAttribute(&quot;name&quot;)]=X[ad].getAttribute(&quot;value&quot;);
+}}P(ai,ah,Y,ab);}else{p(ae);if(ab){ab(aa);}}}}}else{w(Y,true);if(ab){var Z=z(Y);if(Z&amp;&amp;typeof Z.SetVariable!=D){aa.success=true;aa.ref=Z;}ab(aa);}}}}}function z(aa){var X=null;
+var Y=c(aa);if(Y&amp;&amp;Y.nodeName==&quot;OBJECT&quot;){if(typeof Y.SetVariable!=D){X=Y;}else{var Z=Y.getElementsByTagName(r)[0];if(Z){X=Z;}}}return X;}function A(){return !a&amp;&amp;F(&quot;6.0.65&quot;)&amp;&amp;(M.win||M.mac)&amp;&amp;!(M.wk&amp;&amp;M.wk&lt;312);
+}function P(aa,ab,X,Z){a=true;E=Z||null;B={success:false,id:X};var ae=c(X);if(ae){if(ae.nodeName==&quot;OBJECT&quot;){l=g(ae);Q=null;}else{l=ae;Q=X;}aa.id=R;if(typeof aa.width==D||(!/%$/.test(aa.width)&amp;&amp;parseInt(aa.width,10)&lt;310)){aa.width=&quot;310&quot;;
+}if(typeof aa.height==D||(!/%$/.test(aa.height)&amp;&amp;parseInt(aa.height,10)&lt;137)){aa.height=&quot;137&quot;;}j.title=j.title.slice(0,47)+&quot; - Flash Player Installation&quot;;
+var ad=M.ie&amp;&amp;M.win?&quot;ActiveX&quot;:&quot;PlugIn&quot;,ac=&quot;MMredirectURL=&quot;+O.location.toString().replace(/&amp;/g,&quot;%26&quot;)+&quot;&amp;MMplayerType=&quot;+ad+&quot;&amp;MMdoctitle=&quot;+j.title;if(typeof ab.flashvars!=D){ab.flashvars+=&quot;&amp;&quot;+ac;
+}else{ab.flashvars=ac;}if(M.ie&amp;&amp;M.win&amp;&amp;ae.readyState!=4){var Y=C(&quot;div&quot;);X+=&quot;SWFObjectNew&quot;;Y.setAttribute(&quot;id&quot;,X);ae.parentNode.insertBefore(Y,ae);ae.style.display=&quot;none&quot;;
+(function(){if(ae.readyState==4){ae.parentNode.removeChild(ae);}else{setTimeout(arguments.callee,10);}})();}u(aa,ab,X);}}function p(Y){if(M.ie&amp;&amp;M.win&amp;&amp;Y.readyState!=4){var X=C(&quot;div&quot;);
+Y.parentNode.insertBefore(X,Y);X.parentNode.replaceChild(g(Y),X);Y.style.display=&quot;none&quot;;(function(){if(Y.readyState==4){Y.parentNode.removeChild(Y);}else{setTimeout(arguments.callee,10);
+}})();}else{Y.parentNode.replaceChild(g(Y),Y);}}function g(ab){var aa=C(&quot;div&quot;);if(M.win&amp;&amp;M.ie){aa.innerHTML=ab.innerHTML;}else{var Y=ab.getElementsByTagName(r)[0];
+if(Y){var ad=Y.childNodes;if(ad){var X=ad.length;for(var Z=0;Z&lt;X;Z++){if(!(ad[Z].nodeType==1&amp;&amp;ad[Z].nodeName==&quot;PARAM&quot;)&amp;&amp;!(ad[Z].nodeType==8)){aa.appendChild(ad[Z].cloneNode(true));
+}}}}}return aa;}function u(ai,ag,Y){var X,aa=c(Y);if(M.wk&amp;&amp;M.wk&lt;312){return X;}if(aa){if(typeof ai.id==D){ai.id=Y;}if(M.ie&amp;&amp;M.win){var ah=&quot;&quot;;for(var ae in ai){if(ai[ae]!=Object.prototype[ae]){if(ae.toLowerCase()==&quot;data&quot;){ag.movie=ai[ae];
+}else{if(ae.toLowerCase()==&quot;styleclass&quot;){ah+=&#39; class=&quot;&#39;+ai[ae]+&#39;&quot;&#39;;}else{if(ae.toLowerCase()!=&quot;classid&quot;){ah+=&quot; &quot;+ae+&#39;=&quot;&#39;+ai[ae]+&#39;&quot;&#39;;}}}}}var af=&quot;&quot;;for(var ad in ag){if(ag[ad]!=Object.prototype[ad]){af+=&#39;&lt;param name=&quot;&#39;+ad+&#39;&quot; value=&quot;&#39;+ag[ad]+&#39;&quot; /&gt;&#39;;
+}}aa.outerHTML=&#39;&lt;object classid=&quot;clsid:D27CDB6E-AE6D-11cf-96B8-444553540000&quot;&#39;+ah+&quot;&gt;&quot;+af+&quot;&lt;/object&gt;&quot;;N[N.length]=ai.id;X=c(ai.id);}else{var Z=C(r);Z.setAttribute(&quot;type&quot;,q);
+for(var ac in ai){if(ai[ac]!=Object.prototype[ac]){if(ac.toLowerCase()==&quot;styleclass&quot;){Z.setAttribute(&quot;class&quot;,ai[ac]);}else{if(ac.toLowerCase()!=&quot;classid&quot;){Z.setAttribute(ac,ai[ac]);
+}}}}for(var ab in ag){if(ag[ab]!=Object.prototype[ab]&amp;&amp;ab.toLowerCase()!=&quot;movie&quot;){e(Z,ab,ag[ab]);}}aa.parentNode.replaceChild(Z,aa);X=Z;}}return X;}function e(Z,X,Y){var aa=C(&quot;param&quot;);
+aa.setAttribute(&quot;name&quot;,X);aa.setAttribute(&quot;value&quot;,Y);Z.appendChild(aa);}function y(Y){var X=c(Y);if(X&amp;&amp;X.nodeName==&quot;OBJECT&quot;){if(M.ie&amp;&amp;M.win){X.style.display=&quot;none&quot;;
+(function(){if(X.readyState==4){b(Y);}else{setTimeout(arguments.callee,10);}})();}else{X.parentNode.removeChild(X);}}}function b(Z){var Y=c(Z);if(Y){for(var X in Y){if(typeof Y[X]==&quot;function&quot;){Y[X]=null;
+}}Y.parentNode.removeChild(Y);}}function c(Z){var X=null;try{X=j.getElementById(Z);}catch(Y){}return X;}function C(X){return j.createElement(X);}function i(Z,X,Y){Z.attachEvent(X,Y);
+I[I.length]=[Z,X,Y];}function F(Z){var Y=M.pv,X=Z.split(&quot;.&quot;);X[0]=parseInt(X[0],10);X[1]=parseInt(X[1],10)||0;X[2]=parseInt(X[2],10)||0;return(Y[0]&gt;X[0]||(Y[0]==X[0]&amp;&amp;Y[1]&gt;X[1])||(Y[0]==X[0]&amp;&amp;Y[1]==X[1]&amp;&amp;Y[2]&gt;=X[2]))?true:false;
+}function v(ac,Y,ad,ab){if(M.ie&amp;&amp;M.mac){return;}var aa=j.getElementsByTagName(&quot;head&quot;)[0];if(!aa){return;}var X=(ad&amp;&amp;typeof ad==&quot;string&quot;)?ad:&quot;screen&quot;;if(ab){n=null;
+G=null;}if(!n||G!=X){var Z=C(&quot;style&quot;);Z.setAttribute(&quot;type&quot;,&quot;text/css&quot;);Z.setAttribute(&quot;media&quot;,X);n=aa.appendChild(Z);if(M.ie&amp;&amp;M.win&amp;&amp;typeof j.styleSheets!=D&amp;&amp;j.styleSheets.length&gt;0){n=j.styleSheets[j.styleSheets.length-1];
+}G=X;}if(M.ie&amp;&amp;M.win){if(n&amp;&amp;typeof n.addRule==r){n.addRule(ac,Y);}}else{if(n&amp;&amp;typeof j.createTextNode!=D){n.appendChild(j.createTextNode(ac+&quot; {&quot;+Y+&quot;}&quot;));
+}}}function w(Z,X){if(!m){return;}var Y=X?&quot;visible&quot;:&quot;hidden&quot;;if(J&amp;&amp;c(Z)){c(Z).style.visibility=Y;}else{v(&quot;#&quot;+Z,&quot;visibility:&quot;+Y);}}function L(Y){var Z=/[\\\&quot;&lt;&gt;\.;]/;
+var X=Z.exec(Y)!=null;return X&amp;&amp;typeof encodeURIComponent!=D?encodeURIComponent(Y):Y;}var d=function(){if(M.ie&amp;&amp;M.win){window.attachEvent(&quot;onunload&quot;,function(){var ac=I.length;
+for(var ab=0;ab&lt;ac;ab++){I[ab][0].detachEvent(I[ab][1],I[ab][2]);}var Z=N.length;for(var aa=0;aa&lt;Z;aa++){y(N[aa]);}for(var Y in M){M[Y]=null;}M=null;for(var X in swfobject){swfobject[X]=null;
+}swfobject=null;});}}();return{registerObject:function(ab,X,aa,Z){if(M.w3&amp;&amp;ab&amp;&amp;X){var Y={};Y.id=ab;Y.swfVersion=X;Y.expressInstall=aa;Y.callbackFn=Z;o[o.length]=Y;
+w(ab,false);}else{if(Z){Z({success:false,id:ab});}}},getObjectById:function(X){if(M.w3){return z(X);}},embedSWF:function(ab,ah,ae,ag,Y,aa,Z,ad,af,ac){var X={success:false,id:ah};
+if(M.w3&amp;&amp;!(M.wk&amp;&amp;M.wk&lt;312)&amp;&amp;ab&amp;&amp;ah&amp;&amp;ae&amp;&amp;ag&amp;&amp;Y){w(ah,false);K(function(){ae+=&quot;&quot;;ag+=&quot;&quot;;var aj={};if(af&amp;&amp;typeof af===r){for(var al in af){aj[al]=af[al];}}aj.data=ab;
+aj.width=ae;aj.height=ag;var am={};if(ad&amp;&amp;typeof ad===r){for(var ak in ad){am[ak]=ad[ak];}}if(Z&amp;&amp;typeof Z===r){for(var ai in Z){if(typeof am.flashvars!=D){am.flashvars+=&quot;&amp;&quot;+ai+&quot;=&quot;+Z[ai];
+}else{am.flashvars=ai+&quot;=&quot;+Z[ai];}}}if(F(Y)){var an=u(aj,am,ah);if(aj.id==ah){w(ah,true);}X.success=true;X.ref=an;}else{if(aa&amp;&amp;A()){aj.data=aa;P(aj,am,ah,ac);
+return;}else{w(ah,true);}}if(ac){ac(X);}});}else{if(ac){ac(X);}}},switchOffAutoHideShow:function(){m=false;},ua:M,getFlashPlayerVersion:function(){return{major:M.pv[0],minor:M.pv[1],release:M.pv[2]};
+},hasFlashPlayerVersion:F,createSWF:function(Z,Y,X){if(M.w3){return u(Z,Y,X);}else{return undefined;}},showExpressInstall:function(Z,aa,X,Y){if(M.w3&amp;&amp;A()){P(Z,aa,X,Y);
+}},removeSWF:function(X){if(M.w3){y(X);}},createCSS:function(aa,Z,Y,X){if(M.w3){v(aa,Z,Y,X);}},addDomLoadEvent:K,addLoadEvent:s,getQueryParamValue:function(aa){var Z=j.location.search||j.location.hash;
+if(Z){if(/\?/.test(Z)){Z=Z.split(&quot;?&quot;)[1];}if(aa==null){return L(Z);}var Y=Z.split(&quot;&amp;&quot;);for(var X=0;X&lt;Y.length;X++){if(Y[X].substring(0,Y[X].indexOf(&quot;=&quot;))==aa){return L(Y[X].substring((Y[X].indexOf(&quot;=&quot;)+1)));
+}}}return&quot;&quot;;},expressInstallCallback:function(){if(a){var X=c(R);if(X&amp;&amp;l){X.parentNode.replaceChild(l,X);if(Q){w(Q,true);if(M.ie&amp;&amp;M.win){l.style.display=&quot;block&quot;;
+}}if(E){E(B);}}a=false;}}};}();
+
+/*
+SWFUpload: http://www.swfupload.org, http://swfupload.googlecode.com
+
+mmSWFUpload 1.0: Flash upload dialog - http://profandesign.se/swfupload/,  http://www.vinterwebb.se/
+
+SWFUpload is (c) 2006-2007 Lars Huring, Olov Nilzén and Mammon Media and is released under the MIT License:
+http://www.opensource.org/licenses/mit-license.php
+ 
+SWFUpload 2 is (c) 2007-2008 Jake Roberts and is released under the MIT License:
+http://www.opensource.org/licenses/mit-license.php
+*/
+
+var SWFUpload;if(SWFUpload==undefined){SWFUpload=function(a){this.initSWFUpload(a)}}SWFUpload.prototype.initSWFUpload=function(b){try{this.customSettings={};this.settings=b;this.eventQueue=[];this.movieName=&quot;SWFUpload_&quot;+SWFUpload.movieCount++;this.movieElement=null;SWFUpload.instances[this.movieName]=this;this.initSettings();this.loadFlash();this.displayDebugInfo()}catch(a){delete SWFUpload.instances[this.movieName];throw a}};SWFUpload.instances={};SWFUpload.movieCount=0;SWFUpload.version=&quot;2.2.0 2009-03-25&quot;;SWFUpload.QUEUE_ERROR={QUEUE_LIMIT_EXCEEDED:-100,FILE_EXCEEDS_SIZE_LIMIT:-110,ZERO_BYTE_FILE:-120,INVALID_FILETYPE:-130};SWFUpload.UPLOAD_ERROR={HTTP_ERROR:-200,MISSING_UPLOAD_URL:-210,IO_ERROR:-220,SECURITY_ERROR:-230,UPLOAD_LIMIT_EXCEEDED:-240,UPLOAD_FAILED:-250,SPECIFIED_FILE_ID_NOT_FOUND:-260,FILE_VALIDATION_FAILED:-270,FILE_CANCELLED:-280,UPLOAD_STOPPED:-290};SWFUpload.FILE_STATUS={QUEUED:-1,IN_PROGRESS:-2,ERROR:-3,COMPLETE:-4,CANCELLED:-5};SWFUpload.BUTTON_ACTION={SELECT_FILE:-100,SELECT_FILES:-110,START_UPLOAD:-120};SWFUpload.CURSOR={ARROW:-1,HAND:-2};SWFUpload.WINDOW_MODE={WINDOW:&quot;window&quot;,TRANSPARENT:&quot;transparent&quot;,OPAQUE:&quot;opaque&quot;};SWFUpload.completeURL=function(a){if(typeof(a)!==&quot;string&quot;||a.match(/^https?:\/\//i)||a.match(/^\//)){return a}var c=window.location.protocol+&quot;//&quot;+window.location.hostname+(window.location.port?&quot;:&quot;+window.location.port:&quot;&quot;);var b=window.location.pathname.lastIndexOf(&quot;/&quot;);if(b&lt;=0){path=&quot;/&quot;}else{path=window.location.pathname.substr(0,b)+&quot;/&quot;}return path+a};SWFUpload.prototype.initSettings=function(){this.ensureDefault=function(b,a){this.settings[b]=(this.settings[b]==undefined)?a:this.settings[b]};this.ensureDefault(&quot;upload_url&quot;,&quot;&quot;);this.ensureDefault(&quot;preserve_relative_urls&quot;,false);this.ensureDefault(&quot;file_post_name&quot;,&quot;Filedata&quot;);this.ensureDefault(&quot;post_params&quot;,{});this.ensureDefault(&quot;use_query_string&quot;,false);this.ensureDefault(&quot;requeue_on_error&quot;,false);this.ensureDefault(&quot;http_success&quot;,[]);this.ensureDefault(&quot;assume_success_timeout&quot;,0);this.ensureDefault(&quot;file_types&quot;,&quot;*.*&quot;);this.ensureDefault(&quot;file_types_description&quot;,&quot;All Files&quot;);this.ensureDefault(&quot;file_size_limit&quot;,0);this.ensureDefault(&quot;file_upload_limit&quot;,0);this.ensureDefault(&quot;file_queue_limit&quot;,0);this.ensureDefault(&quot;flash_url&quot;,&quot;swfupload.swf&quot;);this.ensureDefault(&quot;prevent_swf_caching&quot;,true);this.ensureDefault(&quot;button_image_url&quot;,&quot;&quot;);this.ensureDefault(&quot;button_width&quot;,1);this.ensureDefault(&quot;button_height&quot;,1);this.ensureDefault(&quot;button_text&quot;,&quot;&quot;);this.ensureDefault(&quot;button_text_style&quot;,&quot;color: #000000; font-size: 16pt;&quot;);this.ensureDefault(&quot;button_text_top_padding&quot;,0);this.ensureDefault(&quot;button_text_left_padding&quot;,0);this.ensureDefault(&quot;button_action&quot;,SWFUpload.BUTTON_ACTION.SELECT_FILES);this.ensureDefault(&quot;button_disabled&quot;,false);this.ensureDefault(&quot;button_placeholder_id&quot;,&quot;&quot;);this.ensureDefault(&quot;button_placeholder&quot;,null);this.ensureDefault(&quot;button_cursor&quot;,SWFUpload.CURSOR.ARROW);this.ensureDefault(&quot;button_window_mode&quot;,SWFUpload.WINDOW_MODE.WINDOW);this.ensureDefault(&quot;debug&quot;,false);this.settings.debug_enabled=this.settings.debug;this.settings.return_upload_start_handler=this.returnUploadStart;this.ensureDefault(&quot;swfupload_loaded_handler&quot;,null);this.ensureDefault(&quot;file_dialog_start_handler&quot;,null);this.ensureDefault(&quot;file_queued_handler&quot;,null);this.ensureDefault(&quot;file_queue_error_handler&quot;,null);this.ensureDefault(&quot;file_dialog_complete_handler&quot;,null);this.ensureDefault(&quot;upload_start_handler&quot;,null);this.ensureDefault(&quot;upload_progress_handler&quot;,null);this.ensureDefault(&quot;upload_error_handler&quot;,null);this.ensureDefault(&quot;upload_success_handler&quot;,null);this.ensureDefault(&quot;upload_complete_handler&quot;,null);this.ensureDefault(&quot;debug_handler&quot;,this.debugMessage);this.ensureDefault(&quot;custom_settings&quot;,{});this.customSettings=this.settings.custom_settings;if(!!this.settings.prevent_swf_caching){this.settings.flash_url=this.settings.flash_url+(this.settings.flash_url.indexOf(&quot;?&quot;)&lt;0?&quot;?&quot;:&quot;&amp;&quot;)+&quot;preventswfcaching=&quot;+new Date().getTime()}if(!this.settings.preserve_relative_urls){this.settings.upload_url=SWFUpload.completeURL(this.settings.upload_url);this.settings.button_image_url=SWFUpload.completeURL(this.settings.button_image_url)}delete this.ensureDefault};SWFUpload.prototype.loadFlash=function(){var a,b;if(document.getElementById(this.movieName)!==null){throw&quot;ID &quot;+this.movieName+&quot; is already in use. The Flash Object could not be added&quot;}a=document.getElementById(this.settings.button_placeholder_id)||this.settings.button_placeholder;if(a==undefined){throw&quot;Could not find the placeholder element: &quot;+this.settings.button_placeholder_id}b=document.createElement(&quot;div&quot;);b.innerHTML=this.getFlashHTML();a.parentNode.replaceChild(b.firstChild,a);if(window[this.movieName]==undefined){window[this.movieName]=this.getMovieElement()}};SWFUpload.prototype.getFlashHTML=function(){return[&#39;&lt;object id=&quot;&#39;,this.movieName,&#39;&quot; type=&quot;application/x-shockwave-flash&quot; data=&quot;&#39;,this.settings.flash_url,&#39;&quot; width=&quot;&#39;,this.settings.button_width,&#39;&quot; height=&quot;&#39;,this.settings.button_height,&#39;&quot; class=&quot;swfupload&quot;&gt;&#39;,&#39;&lt;param name=&quot;wmode&quot; value=&quot;&#39;,this.settings.button_window_mode,&#39;&quot; /&gt;&#39;,&#39;&lt;param name=&quot;movie&quot; value=&quot;&#39;,this.settings.flash_url,&#39;&quot; /&gt;&#39;,&#39;&lt;param name=&quot;quality&quot; value=&quot;high&quot; /&gt;&#39;,&#39;&lt;param name=&quot;menu&quot; value=&quot;false&quot; /&gt;&#39;,&#39;&lt;param name=&quot;allowScriptAccess&quot; value=&quot;always&quot; /&gt;&#39;,&#39;&lt;param name=&quot;flashvars&quot; value=&quot;&#39;+this.getFlashVars()+&#39;&quot; /&gt;&#39;,&quot;&lt;/object&gt;&quot;].join(&quot;&quot;)};SWFUpload.prototype.getFlashVars=function(){var b=this.buildParamString();var a=this.settings.http_success.join(&quot;,&quot;);return[&quot;movieName=&quot;,encodeURIComponent(this.movieName),&quot;&amp;amp;uploadURL=&quot;,encodeURIComponent(this.settings.upload_url),&quot;&amp;amp;useQueryString=&quot;,encodeURIComponent(this.settings.use_query_string),&quot;&amp;amp;requeueOnError=&quot;,encodeURIComponent(this.settings.requeue_on_error),&quot;&amp;amp;httpSuccess=&quot;,encodeURIComponent(a),&quot;&amp;amp;assumeSuccessTimeout=&quot;,encodeURIComponent(this.settings.assume_success_timeout),&quot;&amp;amp;params=&quot;,encodeURIComponent(b),&quot;&amp;amp;filePostName=&quot;,encodeURIComponent(this.settings.file_post_name),&quot;&amp;amp;fileTypes=&quot;,encodeURIComponent(this.settings.file_types),&quot;&amp;amp;fileTypesDescription=&quot;,encodeURIComponent(this.settings.file_types_description),&quot;&amp;amp;fileSizeLimit=&quot;,encodeURIComponent(this.settings.file_size_limit),&quot;&amp;amp;fileUploadLimit=&quot;,encodeURIComponent(this.settings.file_upload_limit),&quot;&amp;amp;fileQueueLimit=&quot;,encodeURIComponent(this.settings.file_queue_limit),&quot;&amp;amp;debugEnabled=&quot;,encodeURIComponent(this.settings.debug_enabled),&quot;&amp;amp;buttonImageURL=&quot;,encodeURIComponent(this.settings.button_image_url),&quot;&amp;amp;buttonWidth=&quot;,encodeURIComponent(this.settings.button_width),&quot;&amp;amp;buttonHeight=&quot;,encodeURIComponent(this.settings.button_height),&quot;&amp;amp;buttonText=&quot;,encodeURIComponent(this.settings.button_text),&quot;&amp;amp;buttonTextTopPadding=&quot;,encodeURIComponent(this.settings.button_text_top_padding),&quot;&amp;amp;buttonTextLeftPadding=&quot;,encodeURIComponent(this.settings.button_text_left_padding),&quot;&amp;amp;buttonTextStyle=&quot;,encodeURIComponent(this.settings.button_text_style),&quot;&amp;amp;buttonAction=&quot;,encodeURIComponent(this.settings.button_action),&quot;&amp;amp;buttonDisabled=&quot;,encodeURIComponent(this.settings.button_disabled),&quot;&amp;amp;buttonCursor=&quot;,encodeURIComponent(this.settings.button_cursor)].join(&quot;&quot;)};SWFUpload.prototype.getMovieElement=function(){if(this.movieElement==undefined){this.movieElement=document.getElementById(this.movieName)}if(this.movieElement===null){throw&quot;Could not find Flash element&quot;}return this.movieElement};SWFUpload.prototype.buildParamString=function(){var c=this.settings.post_params;var b=[];if(typeof(c)===&quot;object&quot;){for(var a in c){if(c.hasOwnProperty(a)){b.push(encodeURIComponent(a.toString())+&quot;=&quot;+encodeURIComponent(c[a].toString()))}}}return b.join(&quot;&amp;amp;&quot;)};SWFUpload.prototype.destroy=function(){try{this.cancelUpload(null,false);var a=null;a=this.getMovieElement();if(a&amp;&amp;typeof(a.CallFunction)===&quot;unknown&quot;){for(var c in a){try{if(typeof(a[c])===&quot;function&quot;){a[c]=null}}catch(e){}}try{a.parentNode.removeChild(a)}catch(b){}}window[this.movieName]=null;SWFUpload.instances[this.movieName]=null;delete SWFUpload.instances[this.movieName];this.movieElement=null;this.settings=null;this.customSettings=null;this.eventQueue=null;this.movieName=null;return true}catch(d){return false}};SWFUpload.prototype.displayDebugInfo=function(){this.debug([&quot;---SWFUpload Instance Info---\n&quot;,&quot;Version: &quot;,SWFUpload.version,&quot;\n&quot;,&quot;Movie Name: &quot;,this.movieName,&quot;\n&quot;,&quot;Settings:\n&quot;,&quot;\t&quot;,&quot;upload_url:               &quot;,this.settings.upload_url,&quot;\n&quot;,&quot;\t&quot;,&quot;flash_url:                &quot;,this.settings.flash_url,&quot;\n&quot;,&quot;\t&quot;,&quot;use_query_string:         &quot;,this.settings.use_query_string.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;requeue_on_error:         &quot;,this.settings.requeue_on_error.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;http_success:             &quot;,this.settings.http_success.join(&quot;, &quot;),&quot;\n&quot;,&quot;\t&quot;,&quot;assume_success_timeout:   &quot;,this.settings.assume_success_timeout,&quot;\n&quot;,&quot;\t&quot;,&quot;file_post_name:           &quot;,this.settings.file_post_name,&quot;\n&quot;,&quot;\t&quot;,&quot;post_params:              &quot;,this.settings.post_params.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;file_types:               &quot;,this.settings.file_types,&quot;\n&quot;,&quot;\t&quot;,&quot;file_types_description:   &quot;,this.settings.file_types_description,&quot;\n&quot;,&quot;\t&quot;,&quot;file_size_limit:          &quot;,this.settings.file_size_limit,&quot;\n&quot;,&quot;\t&quot;,&quot;file_upload_limit:        &quot;,this.settings.file_upload_limit,&quot;\n&quot;,&quot;\t&quot;,&quot;file_queue_limit:         &quot;,this.settings.file_queue_limit,&quot;\n&quot;,&quot;\t&quot;,&quot;debug:                    &quot;,this.settings.debug.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;prevent_swf_caching:      &quot;,this.settings.prevent_swf_caching.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_placeholder_id:    &quot;,this.settings.button_placeholder_id.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_placeholder:       &quot;,(this.settings.button_placeholder?&quot;Set&quot;:&quot;Not Set&quot;),&quot;\n&quot;,&quot;\t&quot;,&quot;button_image_url:         &quot;,this.settings.button_image_url.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_width:             &quot;,this.settings.button_width.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_height:            &quot;,this.settings.button_height.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_text:              &quot;,this.settings.button_text.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_text_style:        &quot;,this.settings.button_text_style.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_text_top_padding:  &quot;,this.settings.button_text_top_padding.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_text_left_padding: &quot;,this.settings.button_text_left_padding.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_action:            &quot;,this.settings.button_action.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;button_disabled:          &quot;,this.settings.button_disabled.toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;custom_settings:          &quot;,this.settings.custom_settings.toString(),&quot;\n&quot;,&quot;Event Handlers:\n&quot;,&quot;\t&quot;,&quot;swfupload_loaded_handler assigned:  &quot;,(typeof this.settings.swfupload_loaded_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;file_dialog_start_handler assigned: &quot;,(typeof this.settings.file_dialog_start_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;file_queued_handler assigned:       &quot;,(typeof this.settings.file_queued_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;file_queue_error_handler assigned:  &quot;,(typeof this.settings.file_queue_error_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;upload_start_handler assigned:      &quot;,(typeof this.settings.upload_start_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;upload_progress_handler assigned:   &quot;,(typeof this.settings.upload_progress_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;upload_error_handler assigned:      &quot;,(typeof this.settings.upload_error_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;upload_success_handler assigned:    &quot;,(typeof this.settings.upload_success_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;upload_complete_handler assigned:   &quot;,(typeof this.settings.upload_complete_handler===&quot;function&quot;).toString(),&quot;\n&quot;,&quot;\t&quot;,&quot;debug_handler assigned:             &quot;,(typeof this.settings.debug_handler===&quot;function&quot;).toString(),&quot;\n&quot;].join(&quot;&quot;))};SWFUpload.prototype.addSetting=function(b,c,a){if(c==undefined){return(this.settings[b]=a)}else{return(this.settings[b]=c)}};SWFUpload.prototype.getSetting=function(a){if(this.settings[a]!=undefined){return this.settings[a]}return&quot;&quot;};SWFUpload.prototype.callFlash=function(functionName,argumentArray){argumentArray=argumentArray||[];var movieElement=this.getMovieElement();var returnValue,returnString;try{returnString=movieElement.CallFunction(&#39;&lt;invoke name=&quot;&#39;+functionName+&#39;&quot; returntype=&quot;javascript&quot;&gt;&#39;+__flash__argumentsToXML(argumentArray,0)+&quot;&lt;/invoke&gt;&quot;);returnValue=eval(returnString)}catch(ex){throw&quot;Call to &quot;+functionName+&quot; failed&quot;}if(returnValue!=undefined&amp;&amp;typeof returnValue.post===&quot;object&quot;){returnValue=this.unescapeFilePostParams(returnValue)}return returnValue};SWFUpload.prototype.selectFile=function(){this.callFlash(&quot;SelectFile&quot;)};SWFUpload.prototype.selectFiles=function(){this.callFlash(&quot;SelectFiles&quot;)};SWFUpload.prototype.startUpload=function(a){this.callFlash(&quot;StartUpload&quot;,[a])};SWFUpload.prototype.cancelUpload=function(a,b){if(b!==false){b=true}this.callFlash(&quot;CancelUpload&quot;,[a,b])};SWFUpload.prototype.stopUpload=function(){this.callFlash(&quot;StopUpload&quot;)};SWFUpload.prototype.getStats=function(){return this.callFlash(&quot;GetStats&quot;)};SWFUpload.prototype.setStats=function(a){this.callFlash(&quot;SetStats&quot;,[a])};SWFUpload.prototype.getFile=function(a){if(typeof(a)===&quot;number&quot;){return this.callFlash(&quot;GetFileByIndex&quot;,[a])}else{return this.callFlash(&quot;GetFile&quot;,[a])}};SWFUpload.prototype.addFileParam=function(a,b,c){return this.callFlash(&quot;AddFileParam&quot;,[a,b,c])};SWFUpload.prototype.removeFileParam=function(a,b){this.callFlash(&quot;RemoveFileParam&quot;,[a,b])};SWFUpload.prototype.setUploadURL=function(a){this.settings.upload_url=a.toString();this.callFlash(&quot;SetUploadURL&quot;,[a])};SWFUpload.prototype.setPostParams=function(a){this.settings.post_params=a;this.callFlash(&quot;SetPostParams&quot;,[a])};SWFUpload.prototype.addPostParam=function(a,b){this.settings.post_params[a]=b;this.callFlash(&quot;SetPostParams&quot;,[this.settings.post_params])};SWFUpload.prototype.removePostParam=function(a){delete this.settings.post_params[a];this.callFlash(&quot;SetPostParams&quot;,[this.settings.post_params])};SWFUpload.prototype.setFileTypes=function(a,b){this.settings.file_types=a;this.settings.file_types_description=b;this.callFlash(&quot;SetFileTypes&quot;,[a,b])};SWFUpload.prototype.setFileSizeLimit=function(a){this.settings.file_size_limit=a;this.callFlash(&quot;SetFileSizeLimit&quot;,[a])};SWFUpload.prototype.setFileUploadLimit=function(a){this.settings.file_upload_limit=a;this.callFlash(&quot;SetFileUploadLimit&quot;,[a])};SWFUpload.prototype.setFileQueueLimit=function(a){this.settings.file_queue_limit=a;this.callFlash(&quot;SetFileQueueLimit&quot;,[a])};SWFUpload.prototype.setFilePostName=function(a){this.settings.file_post_name=a;this.callFlash(&quot;SetFilePostName&quot;,[a])};SWFUpload.prototype.setUseQueryString=function(a){this.settings.use_query_string=a;this.callFlash(&quot;SetUseQueryString&quot;,[a])};SWFUpload.prototype.setRequeueOnError=function(a){this.settings.requeue_on_error=a;this.callFlash(&quot;SetRequeueOnError&quot;,[a])};SWFUpload.prototype.setHTTPSuccess=function(a){if(typeof a===&quot;string&quot;){a=a.replace(&quot; &quot;,&quot;&quot;).split(&quot;,&quot;)}this.settings.http_success=a;this.callFlash(&quot;SetHTTPSuccess&quot;,[a])};SWFUpload.prototype.setAssumeSuccessTimeout=function(a){this.settings.assume_success_timeout=a;this.callFlash(&quot;SetAssumeSuccessTimeout&quot;,[a])};SWFUpload.prototype.setDebugEnabled=function(a){this.settings.debug_enabled=a;this.callFlash(&quot;SetDebugEnabled&quot;,[a])};SWFUpload.prototype.setButtonImageURL=function(a){if(a==undefined){a=&quot;&quot;}this.settings.button_image_url=a;this.callFlash(&quot;SetButtonImageURL&quot;,[a])};SWFUpload.prototype.setButtonDimensions=function(c,a){this.settings.button_width=c;this.settings.button_height=a;var b=this.getMovieElement();if(b!=undefined){b.style.width=c+&quot;px&quot;;b.style.height=a+&quot;px&quot;}this.callFlash(&quot;SetButtonDimensions&quot;,[c,a])};SWFUpload.prototype.setButtonText=function(a){this.settings.button_text=a;this.callFlash(&quot;SetButtonText&quot;,[a])};SWFUpload.prototype.setButtonTextPadding=function(b,a){this.settings.button_text_top_padding=a;this.settings.button_text_left_padding=b;this.callFlash(&quot;SetButtonTextPadding&quot;,[b,a])};SWFUpload.prototype.setButtonTextStyle=function(a){this.settings.button_text_style=a;this.callFlash(&quot;SetButtonTextStyle&quot;,[a])};SWFUpload.prototype.setButtonDisabled=function(a){this.settings.button_disabled=a;this.callFlash(&quot;SetButtonDisabled&quot;,[a])};SWFUpload.prototype.setButtonAction=function(a){this.settings.button_action=a;this.callFlash(&quot;SetButtonAction&quot;,[a])};SWFUpload.prototype.setButtonCursor=function(a){this.settings.button_cursor=a;this.callFlash(&quot;SetButtonCursor&quot;,[a])};SWFUpload.prototype.queueEvent=function(b,c){if(c==undefined){c=[]}else{if(!(c instanceof Array)){c=[c]}}var a=this;if(typeof this.settings[b]===&quot;function&quot;){this.eventQueue.push(function(){this.settings[b].apply(this,c)});setTimeout(function(){a.executeNextEvent()},0)}else{if(this.settings[b]!==null){throw&quot;Event handler &quot;+b+&quot; is unknown or is not a function&quot;}}};SWFUpload.prototype.executeNextEvent=function(){var a=this.eventQueue?this.eventQueue.shift():null;if(typeof(a)===&quot;function&quot;){a.apply(this)}};SWFUpload.prototype.unescapeFilePostParams=function(c){var e=/[$]([0-9a-f]{4})/i;var f={};var d;if(c!=undefined){for(var a in c.post){if(c.post.hasOwnProperty(a)){d=a;var b;while((b=e.exec(d))!==null){d=d.replace(b[0],String.fromCharCode(parseInt(&quot;0x&quot;+b[1],16)))}f[d]=c.post[a]}}c.post=f}return c};SWFUpload.prototype.testExternalInterface=function(){try{return this.callFlash(&quot;TestExternalInterface&quot;)}catch(a){return false}};SWFUpload.prototype.flashReady=function(){var a=this.getMovieElement();if(!a){this.debug(&quot;Flash called back ready but the flash movie can&#39;t be found.&quot;);return}this.cleanUp(a);this.queueEvent(&quot;swfupload_loaded_handler&quot;)};SWFUpload.prototype.cleanUp=function(a){try{if(this.movieElement&amp;&amp;typeof(a.CallFunction)===&quot;unknown&quot;){this.debug(&quot;Removing Flash functions hooks (this should only run in IE and should prevent memory leaks)&quot;);for(var c in a){try{if(typeof(a[c])===&quot;function&quot;){a[c]=null}}catch(b){}}}}catch(d){}window.__flash__removeCallback=function(e,f){try{if(e){e[f]=null}}catch(g){}}};SWFUpload.prototype.fileDialogStart=function(){this.queueEvent(&quot;file_dialog_start_handler&quot;)};SWFUpload.prototype.fileQueued=function(a){a=this.unescapeFilePostParams(a);this.queueEvent(&quot;file_queued_handler&quot;,a)};SWFUpload.prototype.fileQueueError=function(a,c,b){a=this.unescapeFilePostParams(a);this.queueEvent(&quot;file_queue_error_handler&quot;,[a,c,b])};SWFUpload.prototype.fileDialogComplete=function(b,c,a){this.queueEvent(&quot;file_dialog_complete_handler&quot;,[b,c,a])};SWFUpload.prototype.uploadStart=function(a){a=this.unescapeFilePostParams(a);this.queueEvent(&quot;return_upload_start_handler&quot;,a)};SWFUpload.prototype.returnUploadStart=function(a){var b;if(typeof this.settings.upload_start_handler===&quot;function&quot;){a=this.unescapeFilePostParams(a);b=this.settings.upload_start_handler.call(this,a)}else{if(this.settings.upload_start_handler!=undefined){throw&quot;upload_start_handler must be a function&quot;}}if(b===undefined){b=true}b=!!b;this.callFlash(&quot;ReturnUploadStart&quot;,[b])};SWFUpload.prototype.uploadProgress=function(a,c,b){a=this.unescapeFilePostParams(a);this.queueEvent(&quot;upload_progress_handler&quot;,[a,c,b])};SWFUpload.prototype.uploadError=function(a,c,b){a=this.unescapeFilePostParams(a);this.queueEvent(&quot;upload_error_handler&quot;,[a,c,b])};SWFUpload.prototype.uploadSuccess=function(b,a,c){b=this.unescapeFilePostParams(b);this.queueEvent(&quot;upload_success_handler&quot;,[b,a,c])};SWFUpload.prototype.uploadComplete=function(a){a=this.unescapeFilePostParams(a);this.queueEvent(&quot;upload_complete_handler&quot;,a)};SWFUpload.prototype.debug=function(a){this.queueEvent(&quot;debug_handler&quot;,a)};SWFUpload.prototype.debugMessage=function(c){if(this.settings.debug){var a,d=[];if(typeof c===&quot;object&quot;&amp;&amp;typeof c.name===&quot;string&quot;&amp;&amp;typeof c.message===&quot;string&quot;){for(var b in c){if(c.hasOwnProperty(b)){d.push(b+&quot;: &quot;+c[b])}}a=d.join(&quot;\n&quot;)||&quot;&quot;;d=a.split(&quot;\n&quot;);a=&quot;EXCEPTION: &quot;+d.join(&quot;\nEXCEPTION: &quot;);SWFUpload.Console.writeLine(a)}else{SWFUpload.Console.writeLine(c)}}};SWFUpload.Console={};SWFUpload.Console.writeLine=function(d){var b,a;try{b=document.getElementById(&quot;SWFUpload_Console&quot;);if(!b){a=document.createElement(&quot;form&quot;);document.getElementsByTagName(&quot;body&quot;)[0].appendChild(a);b=document.createElement(&quot;textarea&quot;);b.id=&quot;SWFUpload_Console&quot;;b.style.fontFamily=&quot;monospace&quot;;b.setAttribute(&quot;wrap&quot;,&quot;off&quot;);b.wrap=&quot;off&quot;;b.style.overflow=&quot;auto&quot;;b.style.width=&quot;700px&quot;;b.style.height=&quot;350px&quot;;b.style.margin=&quot;5px&quot;;a.appendChild(b)}b.value+=d+&quot;\n&quot;;b.scrollTop=b.scrollHeight-b.clientHeight}catch(c){alert(&quot;Exception: &quot;+c.name+&quot; Message: &quot;+c.message)}};
+
+/*
+Uploadify v3.2.1
+Copyright (c) 2012 Reactive Apps, Ronnie Garcia
+Released under the MIT License &lt;http://www.opensource.org/licenses/mit-license.php&gt; 
+*/
+
+var $ = require(&quot;jquery&quot;);
+
+  // These methods can be called by adding them as the first argument in the uploadify plugin call
+  var methods = {
+
+    init : function(options, swfUploadOptions) {
+      
+      return this.each(function() {
+
+        // Create a reference to the jQuery DOM object
+        var $this = $(this);
+
+        // Clone the original DOM object
+        var $clone = $this.clone();
+
+        // Setup the default options
+        var settings = $.extend({
+          // Required Settings
+          id       : $this.attr(&#39;id&#39;), // The ID of the DOM object
+          swf      : &#39;uploadify.swf&#39;,  // The path to the uploadify SWF file
+          uploader : &#39;uploadify.php&#39;,  // The path to the server-side upload script
+          
+          // Options
+          auto            : true,               // Automatically upload files when added to the queue
+          buttonClass     : &#39;&#39;,                 // A class name to add to the browse button DOM object
+          buttonCursor    : &#39;hand&#39;,             // The cursor to use with the browse button
+          buttonImage     : null,               // (String or null) The path to an image to use for the Flash browse button if not using CSS to style the button
+          buttonText      : &#39;SELECT FILES&#39;,     // The text to use for the browse button
+          checkExisting   : false,              // The path to a server-side script that checks for existing files on the server
+          debug           : false,              // Turn on swfUpload debugging mode
+          fileObjName     : &#39;Filedata&#39;,         // The name of the file object to use in your server-side script
+          fileSizeLimit   : 0,                  // The maximum size of an uploadable file in KB (Accepts units B KB MB GB if string, 0 for no limit)
+          fileTypeDesc    : &#39;All Files&#39;,        // The description for file types in the browse dialog
+          fileTypeExts    : &#39;*.*&#39;,              // Allowed extensions in the browse dialog (server-side validation should also be used)
+          height          : 30,                 // The height of the browse button
+          itemTemplate    : false,              // The template for the file item in the queue
+          method          : &#39;post&#39;,             // The method to use when sending files to the server-side upload script
+          multi           : true,               // Allow multiple file selection in the browse dialog
+          formData        : {},                 // An object with additional data to send to the server-side upload script with every file upload
+          preventCaching  : true,               // Adds a random value to the Flash URL to prevent caching of it (conflicts with existing parameters)
+          progressData    : &#39;percentage&#39;,       // (&#39;percentage&#39; or &#39;speed&#39;) Data to show in the queue item during a file upload
+          queueID         : false,              // The ID of the DOM object to use as a file queue (without the #)
+          queueSizeLimit  : 999,                // The maximum number of files that can be in the queue at one time
+          removeCompleted : true,               // Remove queue items from the queue when they are done uploading
+          removeTimeout   : 3,                  // The delay in seconds before removing a queue item if removeCompleted is set to true
+          requeueErrors   : false,              // Keep errored files in the queue and keep trying to upload them
+          successTimeout  : 30,                 // The number of seconds to wait for Flash to detect the server&#39;s response after the file has finished uploading
+          uploadLimit     : 0,                  // The maximum number of files you can upload
+          width           : 120,                // The width of the browse button
+          
+          // Events
+          overrideEvents  : []             // (Array) A list of default event handlers to skip
+          /*
+          onCancel         // Triggered when a file is cancelled from the queue
+          onClearQueue     // Triggered during the &#39;clear queue&#39; method
+          onDestroy        // Triggered when the uploadify object is destroyed
+          onDialogClose    // Triggered when the browse dialog is closed
+          onDialogOpen     // Triggered when the browse dialog is opened
+          onDisable        // Triggered when the browse button gets disabled
+          onEnable         // Triggered when the browse button gets enabled
+          onFallback       // Triggered is Flash is not detected    
+          onInit           // Triggered when Uploadify is initialized
+          onQueueComplete  // Triggered when all files in the queue have been uploaded
+          onSelectError    // Triggered when an error occurs while selecting a file (file size, queue size limit, etc.)
+          onSelect         // Triggered for each file that is selected
+          onSWFReady       // Triggered when the SWF button is loaded
+          onUploadComplete // Triggered when a file upload completes (success or error)
+          onUploadError    // Triggered when a file upload returns an error
+          onUploadSuccess  // Triggered when a file is uploaded successfully
+          onUploadProgress // Triggered every time a file progress is updated
+          onUploadStart    // Triggered immediately before a file upload starts
+          */
+        }, options);
+
+        // Prepare settings for SWFUpload
+        var swfUploadSettings = {
+          assume_success_timeout   : settings.successTimeout,
+          button_placeholder_id    : settings.id,
+          button_width             : settings.width,
+          button_height            : settings.height,
+          button_text              : null,
+          button_text_style        : null,
+          button_text_top_padding  : 0,
+          button_text_left_padding : 0,
+          button_action            : (settings.multi ? SWFUpload.BUTTON_ACTION.SELECT_FILES : SWFUpload.BUTTON_ACTION.SELECT_FILE),
+          button_disabled          : false,
+          button_cursor            : (settings.buttonCursor == &#39;arrow&#39; ? SWFUpload.CURSOR.ARROW : SWFUpload.CURSOR.HAND),
+          button_window_mode       : SWFUpload.WINDOW_MODE.TRANSPARENT,
+          debug                    : settings.debug,            
+          requeue_on_error         : settings.requeueErrors,
+          file_post_name           : settings.fileObjName,
+          file_size_limit          : settings.fileSizeLimit,
+          file_types               : settings.fileTypeExts,
+          file_types_description   : settings.fileTypeDesc,
+          file_queue_limit         : settings.queueSizeLimit,
+          file_upload_limit        : settings.uploadLimit,
+          flash_url                : settings.swf,          
+          prevent_swf_caching      : settings.preventCaching,
+          post_params              : settings.formData,
+          upload_url               : settings.uploader,
+          use_query_string         : (settings.method == &#39;get&#39;),
+          
+          // Event Handlers 
+          file_dialog_complete_handler : handlers.onDialogClose,
+          file_dialog_start_handler    : handlers.onDialogOpen,
+          file_queued_handler          : handlers.onSelect,
+          file_queue_error_handler     : handlers.onSelectError,
+          swfupload_loaded_handler     : settings.onSWFReady,
+          upload_complete_handler      : handlers.onUploadComplete,
+          upload_error_handler         : handlers.onUploadError,
+          upload_progress_handler      : handlers.onUploadProgress,
+          upload_start_handler         : handlers.onUploadStart,
+          upload_success_handler       : handlers.onUploadSuccess
+        }
+
+        // Merge the user-defined options with the defaults
+        if (swfUploadOptions) {
+          swfUploadSettings = $.extend(swfUploadSettings, swfUploadOptions);
+        }
+        // Add the user-defined settings to the swfupload object
+        swfUploadSettings = $.extend(swfUploadSettings, settings);
+        
+        // Detect if Flash is available
+        var playerVersion  = swfobject.getFlashPlayerVersion();
+        var flashInstalled = (playerVersion.major &gt;= 9);
+
+        if (flashInstalled) {
+          // Create the swfUpload instance
+          window[&#39;uploadify_&#39; + settings.id] = new SWFUpload(swfUploadSettings);
+          var swfuploadify = window[&#39;uploadify_&#39; + settings.id];
+
+          // Add the SWFUpload object to the elements data object
+          $this.data(&#39;uploadify&#39;, swfuploadify);
+          
+          // Wrap the instance
+          var $wrapper = $(&#39;&lt;div /&gt;&#39;, {
+            &#39;id&#39;    : settings.id,
+            &#39;class&#39; : &#39;uploadify&#39;,
+            &#39;css&#39;   : {
+                  &#39;height&#39;   : settings.height + &#39;px&#39;,
+                  &#39;width&#39;    : settings.width + &#39;px&#39;
+                  }
+          });
+          $(&#39;#&#39; + swfuploadify.movieName).wrap($wrapper);
+          // Recreate the reference to wrapper
+          $wrapper = $(&#39;#&#39; + settings.id);
+          // Add the data object to the wrapper 
+          $wrapper.data(&#39;uploadify&#39;, swfuploadify);
+
+          // Create the button
+          var $button = $(&#39;&lt;div /&gt;&#39;, {
+            &#39;id&#39;    : settings.id + &#39;-button&#39;,
+            &#39;class&#39; : &#39;uploadify-button &#39; + settings.buttonClass
+          });
+          if (settings.buttonImage) {
+            $button.css({
+              &#39;background-image&#39; : &quot;url(&#39;&quot; + settings.buttonImage + &quot;&#39;)&quot;,
+              &#39;text-indent&#39;      : &#39;-9999px&#39;
+            });
+          }
+          $button.html(&#39;&lt;span class=&quot;uploadify-button-text&quot;&gt;&#39; + settings.buttonText + &#39;&lt;/span&gt;&#39;)
+          .css({
+            &#39;height&#39;      : settings.height + &#39;px&#39;,
+            &#39;line-height&#39; : settings.height + &#39;px&#39;,
+            &#39;width&#39;       : settings.width + &#39;px&#39;
+          });
+          // Append the button to the wrapper
+          $wrapper.append($button);
+
+          // Adjust the styles of the movie
+          // $(&#39;#&#39; + swfuploadify.movieName).css({
+          //   &#39;position&#39; : &#39;absolute&#39;,
+          //   &#39;z-index&#39;  : 1
+          // });
+          
+          // Create the file queue
+          if (!settings.queueID) {
+            var $queue = $(&#39;&lt;div /&gt;&#39;, {
+              &#39;id&#39;    : settings.id + &#39;-queue&#39;,
+              &#39;class&#39; : &#39;uploadify-queue&#39;
+            });
+            $wrapper.after($queue);
+            swfuploadify.settings.queueID      = settings.id + &#39;-queue&#39;;
+            swfuploadify.settings.defaultQueue = true;
+          }
+          
+          // Create some queue related objects and variables
+          swfuploadify.queueData = {
+            files              : {}, // The files in the queue
+            filesSelected      : 0, // The number of files selected in the last select operation
+            filesQueued        : 0, // The number of files added to the queue in the last select operation
+            filesReplaced      : 0, // The number of files replaced in the last select operation
+            filesCancelled     : 0, // The number of files that were cancelled instead of replaced
+            filesErrored       : 0, // The number of files that caused error in the last select operation
+            uploadsSuccessful  : 0, // The number of files that were successfully uploaded
+            uploadsErrored     : 0, // The number of files that returned errors during upload
+            averageSpeed       : 0, // The average speed of the uploads in KB
+            queueLength        : 0, // The number of files in the queue
+            queueSize          : 0, // The size in bytes of the entire queue
+            uploadSize         : 0, // The size in bytes of the upload queue
+            queueBytesUploaded : 0, // The size in bytes that have been uploaded for the current upload queue
+            uploadQueue        : [], // The files currently to be uploaded
+            errorMsg           : &#39;Some files were not added to the queue:&#39;
+          };
+
+          // Save references to all the objects
+          swfuploadify.original = $clone;
+          swfuploadify.wrapper  = $wrapper;
+          swfuploadify.button   = $button;
+          swfuploadify.queue    = $queue;
+
+          // Call the user-defined init event handler
+          if (settings.onInit) settings.onInit.call($this, swfuploadify);
+
+        } else {
+
+          // Call the fallback function
+          if (settings.onFallback) settings.onFallback.call($this);
+
+        }
+      });
+
+    },
+
+    // Stop a file upload and remove it from the queue 
+    cancel : function(fileID, supressEvent) {
+
+      var args = arguments;
+
+      this.each(function() {
+        // Create a reference to the jQuery DOM object
+        var $this        = $(this),
+          swfuploadify = $this.data(&#39;uploadify&#39;),
+          settings     = swfuploadify.settings,
+          delay        = -1;
+
+        if (args[0]) {
+          // Clear the queue
+          if (args[0] == &#39;*&#39;) {
+            var queueItemCount = swfuploadify.queueData.queueLength;
+            $(&#39;#&#39; + settings.queueID).find(&#39;.uploadify-queue-item&#39;).each(function() {
+              delay++;
+              if (args[1] === true) {
+                swfuploadify.cancelUpload($(this).attr(&#39;id&#39;), false);
+              } else {
+                swfuploadify.cancelUpload($(this).attr(&#39;id&#39;));
+              }
+              $(this).find(&#39;.data&#39;).removeClass(&#39;data&#39;).html(&#39; - Cancelled&#39;);
+              $(this).find(&#39;.uploadify-progress-bar&#39;).remove();
+              $(this).delay(1000 + 100 * delay).fadeOut(500, function() {
+                $(this).remove();
+              });
+            });
+            swfuploadify.queueData.queueSize   = 0;
+            swfuploadify.queueData.queueLength = 0;
+            // Trigger the onClearQueue event
+            if (settings.onClearQueue) settings.onClearQueue.call($this, queueItemCount);
+          } else {
+            for (var n = 0; n &lt; args.length; n++) {
+              swfuploadify.cancelUpload(args[n]);
+              $(&#39;#&#39; + args[n]).find(&#39;.data&#39;).removeClass(&#39;data&#39;).html(&#39; - Cancelled&#39;);
+              $(&#39;#&#39; + args[n]).find(&#39;.uploadify-progress-bar&#39;).remove();
+              $(&#39;#&#39; + args[n]).delay(1000 + 100 * n).fadeOut(500, function() {
+                $(this).remove();
+              });
+            }
+          }
+        } else {
+          var item = $(&#39;#&#39; + settings.queueID).find(&#39;.uploadify-queue-item&#39;).get(0);
+          $item = $(item);
+          swfuploadify.cancelUpload($item.attr(&#39;id&#39;));
+          $item.find(&#39;.data&#39;).removeClass(&#39;data&#39;).html(&#39; - Cancelled&#39;);
+          $item.find(&#39;.uploadify-progress-bar&#39;).remove();
+          $item.delay(1000).fadeOut(500, function() {
+            $(this).remove();
+          });
+        }
+      });
+
+    },
+
+    // Revert the DOM object back to its original state
+    destroy : function() {
+
+      this.each(function() {
+        // Create a reference to the jQuery DOM object
+        var $this        = $(this),
+          swfuploadify = $this.data(&#39;uploadify&#39;),
+          settings     = swfuploadify.settings;
+
+        // Destroy the SWF object and 
+        swfuploadify.destroy();
+        
+        // Destroy the queue
+        if (settings.defaultQueue) {
+          $(&#39;#&#39; + settings.queueID).remove();
+        }
+        
+        // Reload the original DOM element
+        $(&#39;#&#39; + settings.id).replaceWith(swfuploadify.original);
+
+        // Call the user-defined event handler
+        if (settings.onDestroy) settings.onDestroy.call(this);
+
+        delete swfuploadify;
+      });
+
+    },
+
+    // Disable the select button
+    disable : function(isDisabled) {
+      
+      this.each(function() {
+        // Create a reference to the jQuery DOM object
+        var $this        = $(this),
+          swfuploadify = $this.data(&#39;uploadify&#39;),
+          settings     = swfuploadify.settings;
+
+        // Call the user-defined event handlers
+        if (isDisabled) {
+          swfuploadify.button.addClass(&#39;disabled&#39;);
+          if (settings.onDisable) settings.onDisable.call(this);
+        } else {
+          swfuploadify.button.removeClass(&#39;disabled&#39;);
+          if (settings.onEnable) settings.onEnable.call(this);
+        }
+
+        // Enable/disable the browse button
+        swfuploadify.setButtonDisabled(isDisabled);
+      });
+
+    },
+
+    // Get or set the settings data
+    settings : function(name, value, resetObjects) {
+
+      var args        = arguments;
+      var returnValue = value;
+
+      this.each(function() {
+        // Create a reference to the jQuery DOM object
+        var $this        = $(this),
+          swfuploadify = $this.data(&#39;uploadify&#39;),
+          settings     = swfuploadify.settings;
+
+        if (typeof(args[0]) == &#39;object&#39;) {
+          for (var n in value) {
+            setData(n,value[n]);
+          }
+        }
+        if (args.length === 1) {
+          returnValue =  settings[name];
+        } else {
+          switch (name) {
+            case &#39;uploader&#39;:
+              swfuploadify.setUploadURL(value);
+              break;
+            case &#39;formData&#39;:
+              if (!resetObjects) {
+                value = $.extend(settings.formData, value);
+              }
+              swfuploadify.setPostParams(settings.formData);
+              break;
+            case &#39;method&#39;:
+              if (value == &#39;get&#39;) {
+                swfuploadify.setUseQueryString(true);
+              } else {
+                swfuploadify.setUseQueryString(false);
+              }
+              break;
+            case &#39;fileObjName&#39;:
+              swfuploadify.setFilePostName(value);
+              break;
+            case &#39;fileTypeExts&#39;:
+              swfuploadify.setFileTypes(value, settings.fileTypeDesc);
+              break;
+            case &#39;fileTypeDesc&#39;:
+              swfuploadify.setFileTypes(settings.fileTypeExts, value);
+              break;
+            case &#39;fileSizeLimit&#39;:
+              swfuploadify.setFileSizeLimit(value);
+              break;
+            case &#39;uploadLimit&#39;:
+              swfuploadify.setFileUploadLimit(value);
+              break;
+            case &#39;queueSizeLimit&#39;:
+              swfuploadify.setFileQueueLimit(value);
+              break;
+            case &#39;buttonImage&#39;:
+              swfuploadify.button.css(&#39;background-image&#39;, settingValue);
+              break;
+            case &#39;buttonCursor&#39;:
+              if (value == &#39;arrow&#39;) {
+                swfuploadify.setButtonCursor(SWFUpload.CURSOR.ARROW);
+              } else {
+                swfuploadify.setButtonCursor(SWFUpload.CURSOR.HAND);
+              }
+              break;
+            case &#39;buttonText&#39;:
+              $(&#39;#&#39; + settings.id + &#39;-button&#39;).find(&#39;.uploadify-button-text&#39;).html(value);
+              break;
+            case &#39;width&#39;:
+              swfuploadify.setButtonDimensions(value, settings.height);
+              break;
+            case &#39;height&#39;:
+              swfuploadify.setButtonDimensions(settings.width, value);
+              break;
+            case &#39;multi&#39;:
+              if (value) {
+                swfuploadify.setButtonAction(SWFUpload.BUTTON_ACTION.SELECT_FILES);
+              } else {
+                swfuploadify.setButtonAction(SWFUpload.BUTTON_ACTION.SELECT_FILE);
+              }
+              break;
+          }
+          settings[name] = value;
+        }
+      });
+      
+      if (args.length === 1) {
+        return returnValue;
+      }
+
+    },
+
+    // Stop the current uploads and requeue what is in progress
+    stop : function() {
+
+      this.each(function() {
+        // Create a reference to the jQuery DOM object
+        var $this        = $(this),
+          swfuploadify = $this.data(&#39;uploadify&#39;);
+
+        // Reset the queue information
+        swfuploadify.queueData.averageSpeed  = 0;
+        swfuploadify.queueData.uploadSize    = 0;
+        swfuploadify.queueData.bytesUploaded = 0;
+        swfuploadify.queueData.uploadQueue   = [];
+
+        swfuploadify.stopUpload();
+      });
+
+    },
+
+    // Start uploading files in the queue
+    upload : function() {
+
+      var args = arguments;
+
+      this.each(function() {
+        // Create a reference to the jQuery DOM object
+        var $this        = $(this),
+          swfuploadify = $this.data(&#39;uploadify&#39;);
+
+        // Reset the queue information
+        swfuploadify.queueData.averageSpeed  = 0;
+        swfuploadify.queueData.uploadSize    = 0;
+        swfuploadify.queueData.bytesUploaded = 0;
+        swfuploadify.queueData.uploadQueue   = [];
+        
+        // Upload the files
+        if (args[0]) {
+          if (args[0] == &#39;*&#39;) {
+            swfuploadify.queueData.uploadSize = swfuploadify.queueData.queueSize;
+            swfuploadify.queueData.uploadQueue.push(&#39;*&#39;);
+            swfuploadify.startUpload();
+          } else {
+            for (var n = 0; n &lt; args.length; n++) {
+              swfuploadify.queueData.uploadSize += swfuploadify.queueData.files[args[n]].size;
+              swfuploadify.queueData.uploadQueue.push(args[n]);
+            }
+            swfuploadify.startUpload(swfuploadify.queueData.uploadQueue.shift());
+          }
+        } else {
+          swfuploadify.startUpload();
+        }
+
+      });
+
+    }
+
+  }
+
+  // These functions handle all the events that occur with the file uploader
+  var handlers = {
+
+    // Triggered when the file dialog is opened
+    onDialogOpen : function() {
+      // Load the swfupload settings
+      var settings = this.settings;
+
+      // Reset some queue info
+      this.queueData.errorMsg       = &#39;Some files were not added to the queue:&#39;;
+      this.queueData.filesReplaced  = 0;
+      this.queueData.filesCancelled = 0;
+
+      // Call the user-defined event handler
+      if (settings.onDialogOpen) settings.onDialogOpen.call(this);
+    },
+
+    // Triggered when the browse dialog is closed
+    onDialogClose :  function(filesSelected, filesQueued, queueLength) {
+      // Load the swfupload settings
+      var settings = this.settings;
+
+      // Update the queue information
+      this.queueData.filesErrored  = filesSelected - filesQueued;
+      this.queueData.filesSelected = filesSelected;
+      this.queueData.filesQueued   = filesQueued - this.queueData.filesCancelled;
+      this.queueData.queueLength   = queueLength;
+
+      // Run the default event handler
+      if ($.inArray(&#39;onDialogClose&#39;, settings.overrideEvents) &lt; 0) {
+        if (this.queueData.filesErrored &gt; 0) {
+          alert(this.queueData.errorMsg);
+        }
+      }
+
+      // Call the user-defined event handler
+      if (settings.onDialogClose) settings.onDialogClose.call(this, this.queueData);
+
+      // Upload the files if auto is true
+      if (settings.auto) $(&#39;#&#39; + settings.id).uploadify(&#39;upload&#39;, &#39;*&#39;);
+    },
+
+    // Triggered once for each file added to the queue
+    onSelect : function(file) {
+      // Load the swfupload settings
+      var settings = this.settings;
+
+      // Check if a file with the same name exists in the queue
+      var queuedFile = {};
+      for (var n in this.queueData.files) {
+        queuedFile = this.queueData.files[n];
+        if (queuedFile.uploaded != true &amp;&amp; queuedFile.name == file.name) {
+          var replaceQueueItem = confirm(&#39;The file named &quot;&#39; + file.name + &#39;&quot; is already in the queue.\nDo you want to replace the existing item in the queue?&#39;);
+          if (!replaceQueueItem) {
+            this.cancelUpload(file.id);
+            this.queueData.filesCancelled++;
+            return false;
+          } else {
+            $(&#39;#&#39; + queuedFile.id).remove();
+            this.cancelUpload(queuedFile.id);
+            this.queueData.filesReplaced++;
+          }
+        }
+      }
+
+      // Get the size of the file
+      var fileSize = Math.round(file.size / 1024);
+      var suffix   = &#39;KB&#39;;
+      if (fileSize &gt; 1000) {
+        fileSize = Math.round(fileSize / 1000);
+        suffix   = &#39;MB&#39;;
+      }
+      var fileSizeParts = fileSize.toString().split(&#39;.&#39;);
+      fileSize = fileSizeParts[0];
+      if (fileSizeParts.length &gt; 1) {
+        fileSize += &#39;.&#39; + fileSizeParts[1].substr(0,2);
+      }
+      fileSize += suffix;
+      
+      // Truncate the filename if it&#39;s too long
+      var fileName = file.name;
+      if (fileName.length &gt; 25) {
+        fileName = fileName.substr(0,25) + &#39;...&#39;;
+      }
+
+      // Create the file data object
+      itemData = {
+        &#39;fileID&#39;     : file.id,
+        &#39;instanceID&#39; : settings.id,
+        &#39;fileName&#39;   : fileName,
+        &#39;fileSize&#39;   : fileSize
+      }
+
+      // Create the file item template
+      if (settings.itemTemplate == false) {
+        settings.itemTemplate = &#39;&lt;div id=&quot;${fileID}&quot; class=&quot;uploadify-queue-item&quot;&gt;\
+          &lt;div class=&quot;cancel&quot;&gt;\
+            &lt;a href=&quot;javascript:$(\&#39;#${instanceID}\&#39;).uploadify(\&#39;cancel\&#39;, \&#39;${fileID}\&#39;)&quot;&gt;X&lt;/a&gt;\
+          &lt;/div&gt;\
+          &lt;span class=&quot;fileName&quot;&gt;${fileName} (${fileSize})&lt;/span&gt;&lt;span class=&quot;data&quot;&gt;&lt;/span&gt;\
+          &lt;div class=&quot;uploadify-progress&quot;&gt;\
+            &lt;div class=&quot;uploadify-progress-bar&quot;&gt;&lt;!--Progress Bar--&gt;&lt;/div&gt;\
+          &lt;/div&gt;\
+        &lt;/div&gt;&#39;;
+      }
+
+      // Run the default event handler
+      if ($.inArray(&#39;onSelect&#39;, settings.overrideEvents) &lt; 0) {
+        
+        // Replace the item data in the template
+        itemHTML = settings.itemTemplate;
+        for (var d in itemData) {
+          itemHTML = itemHTML.replace(new RegExp(&#39;\\$\\{&#39; + d + &#39;\\}&#39;, &#39;g&#39;), itemData[d]);
+        }
+
+        // Add the file item to the queue
+        $(&#39;#&#39; + settings.queueID).append(itemHTML);
+      }
+
+      this.queueData.queueSize += file.size;
+      this.queueData.files[file.id] = file;
+
+      // Call the user-defined event handler
+      if (settings.onSelect) settings.onSelect.apply(this, arguments);
+    },
+
+    // Triggered when a file is not added to the queue
+    onSelectError : function(file, errorCode, errorMsg) {
+      // Load the swfupload settings
+      var settings = this.settings;
+
+      // Run the default event handler
+      if ($.inArray(&#39;onSelectError&#39;, settings.overrideEvents) &lt; 0) {
+        switch(errorCode) {
+          case SWFUpload.QUEUE_ERROR.QUEUE_LIMIT_EXCEEDED:
+            if (settings.queueSizeLimit &gt; errorMsg) {
+              this.queueData.errorMsg += &#39;\nThe number of files selected exceeds the remaining upload limit (&#39; + errorMsg + &#39;).&#39;;
+            } else {
+              this.queueData.errorMsg += &#39;\nThe number of files selected exceeds the queue size limit (&#39; + settings.queueSizeLimit + &#39;).&#39;;
+            }
+            break;
+          case SWFUpload.QUEUE_ERROR.FILE_EXCEEDS_SIZE_LIMIT:
+            this.queueData.errorMsg += &#39;\nThe file &quot;&#39; + file.name + &#39;&quot; exceeds the size limit (&#39; + settings.fileSizeLimit + &#39;).&#39;;
+            break;
+          case SWFUpload.QUEUE_ERROR.ZERO_BYTE_FILE:
+            this.queueData.errorMsg += &#39;\nThe file &quot;&#39; + file.name + &#39;&quot; is empty.&#39;;
+            break;
+          case SWFUpload.QUEUE_ERROR.FILE_EXCEEDS_SIZE_LIMIT:
+            this.queueData.errorMsg += &#39;\nThe file &quot;&#39; + file.name + &#39;&quot; is not an accepted file type (&#39; + settings.fileTypeDesc + &#39;).&#39;;
+            break;
+        }
+      }
+      if (errorCode != SWFUpload.QUEUE_ERROR.QUEUE_LIMIT_EXCEEDED) {
+        delete this.queueData.files[file.id];
+      }
+
+      // Call the user-defined event handler
+      if (settings.onSelectError) settings.onSelectError.apply(this, arguments);
+    },
+
+    // Triggered when all the files in the queue have been processed
+    onQueueComplete : function() {
+      if (this.settings.onQueueComplete) this.settings.onQueueComplete.call(this, this.settings.queueData);
+    },
+
+    // Triggered when a file upload successfully completes
+    onUploadComplete : function(file) {
+      // Load the swfupload settings
+      var settings     = this.settings,
+        swfuploadify = this;
+
+      // Check if all the files have completed uploading
+      var stats = this.getStats();
+      this.queueData.queueLength = stats.files_queued;
+      if (this.queueData.uploadQueue[0] == &#39;*&#39;) {
+        if (this.queueData.queueLength &gt; 0) {
+          this.startUpload();
+        } else {
+          this.queueData.uploadQueue = [];
+
+          // Call the user-defined event handler for queue complete
+          if (settings.onQueueComplete) settings.onQueueComplete.call(this, this.queueData);
+        }
+      } else {
+        if (this.queueData.uploadQueue.length &gt; 0) {
+          this.startUpload(this.queueData.uploadQueue.shift());
+        } else {
+          this.queueData.uploadQueue = [];
+
+          // Call the user-defined event handler for queue complete
+          if (settings.onQueueComplete) settings.onQueueComplete.call(this, this.queueData);
+        }
+      }
+
+      // Call the default event handler
+      if ($.inArray(&#39;onUploadComplete&#39;, settings.overrideEvents) &lt; 0) {
+        if (settings.removeCompleted) {
+          switch (file.filestatus) {
+            case SWFUpload.FILE_STATUS.COMPLETE:
+              setTimeout(function() { 
+                if ($(&#39;#&#39; + file.id)) {
+                  swfuploadify.queueData.queueSize   -= file.size;
+                  swfuploadify.queueData.queueLength -= 1;
+                  delete swfuploadify.queueData.files[file.id]
+                  $(&#39;#&#39; + file.id).fadeOut(500, function() {
+                    $(this).remove();
+                  });
+                }
+              }, settings.removeTimeout * 1000);
+              break;
+            case SWFUpload.FILE_STATUS.ERROR:
+              if (!settings.requeueErrors) {
+                setTimeout(function() {
+                  if ($(&#39;#&#39; + file.id)) {
+                    swfuploadify.queueData.queueSize   -= file.size;
+                    swfuploadify.queueData.queueLength -= 1;
+                    delete swfuploadify.queueData.files[file.id];
+                    $(&#39;#&#39; + file.id).fadeOut(500, function() {
+                      $(this).remove();
+                    });
+                  }
+                }, settings.removeTimeout * 1000);
+              }
+              break;
+          }
+        } else {
+          file.uploaded = true;
+        }
+      }
+
+      // Call the user-defined event handler
+      if (settings.onUploadComplete) settings.onUploadComplete.call(this, file);
+    },
+
+    // Triggered when a file upload returns an error
+    onUploadError : function(file, errorCode, errorMsg) {
+      // Load the swfupload settings
+      var settings = this.settings;
+
+      // Set the error string
+      var errorString = &#39;Error&#39;;
+      switch(errorCode) {
+        case SWFUpload.UPLOAD_ERROR.HTTP_ERROR:
+          errorString = &#39;HTTP Error (&#39; + errorMsg + &#39;)&#39;;
+          break;
+        case SWFUpload.UPLOAD_ERROR.MISSING_UPLOAD_URL:
+          errorString = &#39;Missing Upload URL&#39;;
+          break;
+        case SWFUpload.UPLOAD_ERROR.IO_ERROR:
+          errorString = &#39;IO Error&#39;;
+          break;
+        case SWFUpload.UPLOAD_ERROR.SECURITY_ERROR:
+          errorString = &#39;Security Error&#39;;
+          break;
+        case SWFUpload.UPLOAD_ERROR.UPLOAD_LIMIT_EXCEEDED:
+          alert(&#39;The upload limit has been reached (&#39; + errorMsg + &#39;).&#39;);
+          errorString = &#39;Exceeds Upload Limit&#39;;
+          break;
+        case SWFUpload.UPLOAD_ERROR.UPLOAD_FAILED:
+          errorString = &#39;Failed&#39;;
+          break;
+        case SWFUpload.UPLOAD_ERROR.SPECIFIED_FILE_ID_NOT_FOUND:
+          break;
+        case SWFUpload.UPLOAD_ERROR.FILE_VALIDATION_FAILED:
+          errorString = &#39;Validation Error&#39;;
+          break;
+        case SWFUpload.UPLOAD_ERROR.FILE_CANCELLED:
+          errorString = &#39;Cancelled&#39;;
+          this.queueData.queueSize   -= file.size;
+          this.queueData.queueLength -= 1;
+          if (file.status == SWFUpload.FILE_STATUS.IN_PROGRESS || $.inArray(file.id, this.queueData.uploadQueue) &gt;= 0) {
+            this.queueData.uploadSize -= file.size;
+          }
+          // Trigger the onCancel event
+          if (settings.onCancel) settings.onCancel.call(this, file);
+          delete this.queueData.files[file.id];
+          break;
+        case SWFUpload.UPLOAD_ERROR.UPLOAD_STOPPED:
+          errorString = &#39;Stopped&#39;;
+          break;
+      }
+
+      // Call the default event handler
+      if ($.inArray(&#39;onUploadError&#39;, settings.overrideEvents) &lt; 0) {
+
+        if (errorCode != SWFUpload.UPLOAD_ERROR.FILE_CANCELLED &amp;&amp; errorCode != SWFUpload.UPLOAD_ERROR.UPLOAD_STOPPED) {
+          $(&#39;#&#39; + file.id).addClass(&#39;uploadify-error&#39;);
+        }
+
+        // Reset the progress bar
+        $(&#39;#&#39; + file.id).find(&#39;.uploadify-progress-bar&#39;).css(&#39;width&#39;,&#39;1px&#39;);
+
+        // Add the error message to the queue item
+        if (errorCode != SWFUpload.UPLOAD_ERROR.SPECIFIED_FILE_ID_NOT_FOUND &amp;&amp; file.status != SWFUpload.FILE_STATUS.COMPLETE) {
+          $(&#39;#&#39; + file.id).find(&#39;.data&#39;).html(&#39; - &#39; + errorString);
+        }
+      }
+
+      var stats = this.getStats();
+      this.queueData.uploadsErrored = stats.upload_errors;
+
+      // Call the user-defined event handler
+      if (settings.onUploadError) settings.onUploadError.call(this, file, errorCode, errorMsg, errorString);
+    },
+
+    // Triggered periodically during a file upload
+    onUploadProgress : function(file, fileBytesLoaded, fileTotalBytes) {
+      // Load the swfupload settings
+      var settings = this.settings;
+
+      // Setup all the variables
+      var timer            = new Date();
+      var newTime          = timer.getTime();
+      var lapsedTime       = newTime - this.timer;
+      if (lapsedTime &gt; 500) {
+        this.timer = newTime;
+      }
+      var lapsedBytes      = fileBytesLoaded - this.bytesLoaded;
+      this.bytesLoaded     = fileBytesLoaded;
+      var queueBytesLoaded = this.queueData.queueBytesUploaded + fileBytesLoaded;
+      var percentage       = Math.round(fileBytesLoaded / fileTotalBytes * 100);
+      
+      // Calculate the average speed
+      var suffix = &#39;KB/s&#39;;
+      var mbs = 0;
+      var kbs = (lapsedBytes / 1024) / (lapsedTime / 1000);
+          kbs = Math.floor(kbs * 10) / 10;
+      if (this.queueData.averageSpeed &gt; 0) {
+        this.queueData.averageSpeed = Math.floor((this.queueData.averageSpeed + kbs) / 2);
+      } else {
+        this.queueData.averageSpeed = Math.floor(kbs);
+      }
+      if (kbs &gt; 1000) {
+        mbs = (kbs * .001);
+        this.queueData.averageSpeed = Math.floor(mbs);
+        suffix = &#39;MB/s&#39;;
+      }
+      
+      // Call the default event handler
+      if ($.inArray(&#39;onUploadProgress&#39;, settings.overrideEvents) &lt; 0) {
+        if (settings.progressData == &#39;percentage&#39;) {
+          $(&#39;#&#39; + file.id).find(&#39;.data&#39;).html(&#39; - &#39; + percentage + &#39;%&#39;);
+        } else if (settings.progressData == &#39;speed&#39; &amp;&amp; lapsedTime &gt; 500) {
+          $(&#39;#&#39; + file.id).find(&#39;.data&#39;).html(&#39; - &#39; + this.queueData.averageSpeed + suffix);
+        }
+        $(&#39;#&#39; + file.id).find(&#39;.uploadify-progress-bar&#39;).css(&#39;width&#39;, percentage + &#39;%&#39;);
+      }
+
+      // Call the user-defined event handler
+      if (settings.onUploadProgress) settings.onUploadProgress.call(this, file, fileBytesLoaded, fileTotalBytes, queueBytesLoaded, this.queueData.uploadSize);
+    },
+
+    // Triggered right before a file is uploaded
+    onUploadStart : function(file) {
+      // Load the swfupload settings
+      var settings = this.settings;
+
+      var timer        = new Date();
+      this.timer       = timer.getTime();
+      this.bytesLoaded = 0;
+      if (this.queueData.uploadQueue.length == 0) {
+        this.queueData.uploadSize = file.size;
+      }
+      if (settings.checkExisting) {
+        $.ajax({
+          type    : &#39;POST&#39;,
+          async   : false,
+          url     : settings.checkExisting,
+          data    : {filename: file.name},
+          success : function(data) {
+            if (data == 1) {
+              var overwrite = confirm(&#39;A file with the name &quot;&#39; + file.name + &#39;&quot; already exists on the server.\nWould you like to replace the existing file?&#39;);
+              if (!overwrite) {
+                this.cancelUpload(file.id);
+                $(&#39;#&#39; + file.id).remove();
+                if (this.queueData.uploadQueue.length &gt; 0 &amp;&amp; this.queueData.queueLength &gt; 0) {
+                  if (this.queueData.uploadQueue[0] == &#39;*&#39;) {
+                    this.startUpload();
+                  } else {
+                    this.startUpload(this.queueData.uploadQueue.shift());
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
+
+      // Call the user-defined event handler
+      if (settings.onUploadStart) settings.onUploadStart.call(this, file); 
+    },
+
+    // Triggered when a file upload returns a successful code
+    onUploadSuccess : function(file, data, response) {
+      // Load the swfupload settings
+      var settings = this.settings;
+      var stats    = this.getStats();
+      this.queueData.uploadsSuccessful = stats.successful_uploads;
+      this.queueData.queueBytesUploaded += file.size;
+
+      // Call the default event handler
+      if ($.inArray(&#39;onUploadSuccess&#39;, settings.overrideEvents) &lt; 0) {
+        $(&#39;#&#39; + file.id).find(&#39;.data&#39;).html(&#39; - Complete&#39;);
+      }
+
+      // Call the user-defined event handler
+      if (settings.onUploadSuccess) settings.onUploadSuccess.call(this, file, data, response); 
+    }
+
+  }
+
+  $.fn.uploadify = function(method) {
+
+    if (methods[method]) {
+      return methods[method].apply(this, Array.prototype.slice.call(arguments, 1));
+    } else if (typeof method === &#39;object&#39; || !method) {
+      return methods.init.apply(this, arguments);
+    } else {
+      $.error(&#39;The method &#39; + method + &#39; does not exist in $.uploadify&#39;);
+    }
+
+  }
+
+window.SWFUpload = SWFUpload;
+window.swfobject = swfobject;
+
+  module.exports = methods;
+
+
+});
+define(&quot;bui/uploader/type/uploadify&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @ignore
+ * @fileoverview flash上传方案
+ * @author 
+ **/
+var $ = require(&quot;jquery&quot;),
+    File = require(&quot;bui/uploader/file&quot;),
+    UploadType = require(&quot;bui/uploader/type/base&quot;);
+
+var LOG_PREFIX = &#39;[uploader-Flash]:&#39;;
+
+
+//获取链接绝对路径正则
+var URI_SPLIT_REG = new RegExp(&#39;^([^?#]+)?(?:\\?([^#]*))?(?:#(.*))?$&#39;),
+    HOSTNAME_SPLIT_REG = new RegExp(&#39;^(?:([\\w\\d+.-]+):)?(?://([\\w\\d\\-\\u0100-\\uffff.+%]*))?.*$&#39;);
+
+<span id='BUI-Uploader-UploadType-Flash'>/**
+</span> * @class BUI.Uploader.UploadType.Flash
+ * flash上传方案
+ * 使用时要确认flash与提交的url是否跨越，如果跨越则需要设置crossdomain.xml
+ * @extends BUI.Uploader.UploadType
+ */
+function FlashType(config) {
+    var _self = this;
+    //调用父类构造函数
+    FlashType.superclass.constructor.call(_self, config);
+}
+
+BUI.extend(FlashType, UploadType, {
+<span id='BUI-Uploader-UploadType-Flash-method-_init'>    /**
+</span>     * 初始化
+     */
+    _init:function () {
+        var _self = this;
+        var swfButton = _self.get(&#39;swfButton&#39;);
+        var uploadifyEl = swfButton.get(&#39;uploadifyEl&#39;);
+
+        //测试是否存在crossdomain.xml
+        // _self._hasCrossdomain();
+
+        var uploadify = uploadifyEl.uploadify({
+          auto: false,
+          width: 200,
+          height: 200,
+          swf: swfButton.get(&#39;flashUrl&#39;),
+          uploader: _self.get(&#39;url&#39;),
+          onSelect: function (file) {
+            var files = [];
+            files.push(File.create(file));
+            swfButton.fire(&#39;change&#39;, {files: files});
+          },
+          onUploadStart: function (file) {
+            _self.fire(&#39;start&#39;, {file: File.create(file)});
+          },
+          onUploadProgress: function(file, bytesUploaded, bytesTotal, totalBytesUploaded, totalBytesTotal) {
+            _self.fire(&#39;progress&#39;, { &#39;loaded&#39;: bytesUploaded, &#39;total&#39;: bytesTotal });
+          },
+          onUploadSuccess: function (file, data, response) {
+            var result = _self._processResponse(data);
+            file = File.create(file);
+            _self.fire(&#39;complete&#39;, {result: result, file: file});
+            // _self.fire(&#39;complete&#39;, {result: result, file: file});
+          },
+          onUploadError: function (file) {
+            _self.fire(&#39;error&#39;, {file: File.create(file)});
+          }
+        });
+
+        _self.set(&#39;uploadify&#39;, uploadify);
+
+
+    },
+<span id='BUI-Uploader-UploadType-Flash-method-upload'>    /**
+</span>     * 上传文件
+     * @param {String} id 文件id
+     * @return {BUI.Uploader.UploadType.Flash}
+     * @chainable
+     */
+    upload:function () {
+        var _self = this;
+        var swfButton = _self.get(&#39;swfButton&#39;);
+        var uploadifyEl = swfButton.get(&#39;uploadifyEl&#39;);
+
+        uploadifyEl.uploadify(&quot;upload&quot;, &#39;*&#39;);
+
+        return _self;
+    },
+    cancel: function () {
+        var _self = this;
+        var swfButton = _self.get(&#39;swfButton&#39;);
+        var uploadifyEl = swfButton.get(&#39;uploadifyEl&#39;);
+
+        uploadifyEl.uploadify(&quot;cancel&quot;, &#39;*&#39;);
+
+        return _self;
+    },
+<span id='BUI-Uploader-UploadType-Flash-method-_hasCrossdomain'>    /**
+</span>     * 应用是否有flash跨域策略文件
+     * @private
+     * 2014-01-13 应该判断swf的路径上提交上传接口的路径是否同域
+     */
+    _hasCrossdomain: function(){
+        var _self = this,
+
+            // http://g.tbcdn.cn/fi/bui/upload.php =&gt; [&#39;http://g.tbcdn.cn/fi/bui/upload.php&#39;, &#39;http&#39;, &#39;g.tbcdn.cn&#39;]
+            url = _self.get(&#39;url&#39;).match(HOSTNAME_SPLIT_REG) || [],
+            flashUrl = _self.get(&#39;swfUploader&#39;).get(&#39;src&#39;).match(HOSTNAME_SPLIT_REG) || [],
+            urlDomain = url[2],
+            flashUrlDomain = flashUrl[2];
+
+        //不同域时才去校验crossdomain
+        if(urlDomain &amp;&amp; flashUrlDomain &amp;&amp; urlDomain !== flashUrlDomain){
+            $.ajax({
+                url: url[1] + &#39;://&#39; + urlDomain + &#39;/crossdomain.xml&#39;,
+                dataType:&quot;xml&quot;,
+                error:function(){
+                   BUI.log(&#39;缺少crossdomain.xml文件或该文件不合法！&#39;);
+                }
+            });
+        }
+    }
+}, {ATTRS:{
+    uploader: {
+        setter: function(v){
+            var _self = this;
+            if(v &amp;&amp; v.isController){
+                //因为flash上传需要依赖swfButton，所以是要等flash加载完成后才可以初始化的
+                var swfButton = v.get(&#39;button&#39;);
+                _self.set(&#39;swfButton&#39;, swfButton);
+                _self._init();
+            }
+        }
+    },
+<span id='BUI-Uploader-UploadType-Flash-property-url'>    /**
+</span>     * 服务器端路径，留意flash必须是绝对路径
+     */
+    url:{
+        setter: function(v){
+            var reg = /^http/;
+            //不是绝对路径拼接成绝对路径
+            if(!reg.test(v)){
+                //获取前面url部份
+                //修复下如下链接问题：http://a.b.com/a.html?a=a/b/c#d/e/f =&gt; http://a.b.com/a.html
+                var href = location.href.match(URI_SPLIT_REG) || [],
+                    path = href[1] || &#39;&#39;,
+                    uris = path.split(&#39;/&#39;),
+                    newUris;
+                newUris  = BUI.Array.filter(uris,function(item,i){
+                    return i &lt; uris.length - 1;
+                });
+                v = newUris.join(&#39;/&#39;) + &#39;/&#39; + v;
+            }
+            return v;
+        }
+    },
+<span id='BUI-Uploader-UploadType-Flash-property-uploadingId'>    /**
+</span>     * 正在上传的文件id
+     */
+    uploadingId : {},
+<span id='BUI-Uploader-UploadType-Flash-property-events'>    /**
+</span>     * 事件列表
+     */
+    events:{
+        value: {
+<span id='BUI-Uploader-UploadType-Flash-event-progress'>            /**
+</span>             * 上传正在上传时
+             * @event
+             * @param {Object} e 事件对象
+             * @param {Number} total 文件的总大小
+             * @param {Number} loaded 已经上传的大小
+             */
+            progress: false
+        }
+    }
+}});
+
+module.exports = FlashType;
+
+});
+define(&quot;bui/uploader/validator&quot;, [&quot;jquery&quot;,&quot;bui/common&quot;], function(require, exports, module){
+<span id='global-property-S-'>/**
+</span> * @ignore
+ * @fileoverview 异步文件上传的验证器
+ * @author 索丘 yezengyue@gmail.com
+ **/
+
+var $ = require(&quot;jquery&quot;),
+  BUI = require(&quot;bui/common&quot;);
+
+
+<span id='BUI-Uploader-Validator'>/**
+</span> * 异步文件上传的验证器
+ * @class BUI.Uploader.Validator
+ * @extend BUI.Base
+ *
+ * &lt;pre&gt;&lt;code&gt;
+ * //默认已经定义的一些规则
+ * rules: {
+ *   maxSize: [1024, &#39;文件最大不能超过1M!&#39;],
+ *   minSize: [1, &#39;文件最小不能小于1k!&#39;],
+ *   max: [5, &#39;文件最多不能超过{0}个！&#39;],
+ *   min: [1, &#39;文件最少不能少于{0}个!&#39;],
+ *   ext: [&#39;.png&#39;,&#39;文件类型只能为{0}&#39;]
+ * }
+ * &lt;/code&gt;&lt;/pre&gt;
+ */
+function Validator(config){
+  Validator.superclass.constructor.call(this, config);
+}
+
+Validator.ATTRS = {
+<span id='BUI-Uploader-Validator-property-rules'>  /**
+</span>   * 上传组件的校验规则
+   * @type {Object}
+   */
+  rules: {
+  },
+  queue: {
+  }
+}
+
+BUI.extend(Validator, BUI.Base);
+
+BUI.augment(Validator, {
+<span id='BUI-Uploader-Validator-method-valid'>  /**
+</span>   * 校验文件是否符合规则，并设置文件的状态
+   * @param  {Object} item
+   * @return {Boolean} 校验结果
+   */
+  valid: function(item){
+    return this._validItem(item);
+  },
+  _validItem: function(item){
+    var _self = this,
+      rules = _self.get(&#39;rules&#39;),
+      isValid = true;
+
+    BUI.each(rules, function(rule, name){
+      isValid = isValid &amp;&amp; _self._validRule(item, name, rule);
+      return isValid;
+    })
+    return isValid;
+  },
+  _validRule: function(item, name, rule, msg){
+    if(BUI.isArray(rule)){
+      msg = BUI.substitute(rule[1], rule);
+      rule = rule[0];
+    }
+    var ruleFn = Validator.getRule(name),
+      validMsg = ruleFn &amp;&amp; ruleFn.call(this, item, rule, msg),
+      result = this._getResult(validMsg);
+
+    if(result){
+      item.result = result;
+      return false;
+    }
+    return true;
+  },
+<span id='BUI-Uploader-Validator-method-_getResult'>  /**
+</span>   * 获取校验的结果
+   * @param  {String} msg
+   */
+  _getResult: function(msg){
+    if(msg){
+      return {
+        msg: msg
+      }
+    }
+  }
+});
+
+
+var ruleMap = {};
+
+Validator.addRule = function(name, fn){
+  ruleMap[name] = fn;
+}
+
+Validator.getRule = function(name){
+  return ruleMap[name];
+}
+
+//文件最大值
+Validator.addRule(&#39;maxSize&#39;, function(item, baseValue, formatMsg){
+  if(item.size &gt; baseValue * 1024){
+    return formatMsg;
+  }
+});
+
+//文件最小值
+Validator.addRule(&#39;minSize&#39;, function(item, baseValue, formatMsg){
+  if(item.size &lt; baseValue * 1024){
+    return formatMsg;
+  }
+});
+
+//上传文件的最大个数
+Validator.addRule(&#39;max&#39;, function(item, baseValue, formatMsg){
+  var count = this.get(&#39;queue&#39;).getCount();
+  if(count &gt; baseValue){
+    return formatMsg;
+  }
+});
+
+//上传文件的最小个数
+Validator.addRule(&#39;min&#39;, function(item, baseValue, formatMsg){
+  var count = this.get(&#39;queue&#39;).getCount();
+  if(count &lt; baseValue){
+    return formatMsg;
+  }
+});
+
+//上传文件的文件类型
+Validator.addRule(&#39;ext&#39;, function(item, baseValue, formatMsg){
+  var ext = item.ext,
+    baseValue = baseValue.split(&#39;,&#39;);
+  if($.inArray(ext, baseValue) === -1){
+    return formatMsg;
+  }
+});
+
+module.exports = Validator;
+
+});
+</pre>
+</body>
+</html>
